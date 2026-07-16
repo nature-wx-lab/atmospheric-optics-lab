@@ -14,13 +14,25 @@ import {
 import {
   SPECTRAL_SAMPLES,
   findStationaryRay,
+  fresnelPower,
   rainbowAngleRange,
   type RainbowOrder
 } from "./physics/rainbow";
+import {
+  OBSERVER_OPTICAL_ORIGIN,
+  RAINBOW_CAMERA_FAR,
+  RAINBOW_CAMERA_NEAR,
+  RAINBOW_CHAPTER_LABELS,
+  cameraDistanceFromProgress,
+  formatSemanticSpan,
+  progressFromCameraDistance,
+  rainbowZoomFrame,
+  type RainbowZoomChapter,
+  type RainbowZoomFrame
+} from "./physics/semanticZoom";
 import { ChaseExperiment } from "./scenes/chaseExperiment";
-import { DropletDetail } from "./scenes/dropletDetail";
 import { HaloOverview } from "./scenes/haloOverview";
-import { RainbowOverview } from "./scenes/rainbowOverview";
+import { RainbowJourney } from "./scenes/rainbowJourney";
 
 type ViewName = "overview" | "chase" | "droplet" | "halo";
 
@@ -30,6 +42,7 @@ interface AppState {
   sunElevation: number;
   sunAzimuth: number;
   particleDensity: number;
+  rainbowZoom: number;
   observerDistanceM: number;
   haloPhenomenon: HaloPhenomenonId;
 }
@@ -88,6 +101,7 @@ const state: AppState = {
   sunElevation: 12,
   sunAzimuth: 225,
   particleDensity: 0.7,
+  rainbowZoom: 0,
   observerDistanceM: 0,
   haloPhenomenon: "halo-22"
 };
@@ -140,16 +154,16 @@ const rimLight = new THREE.DirectionalLight(0x4eb9d4, 1.2);
 rimLight.position.set(9, -2, -5);
 scene.add(rimLight);
 
-const overview = new RainbowOverview();
+const rainbowJourney = new RainbowJourney();
 const chase = new ChaseExperiment({
   order: state.order,
   sunElevationDeg: CHASE_SUN_ELEVATION,
   sunAzimuthDeg: CHASE_SUN_AZIMUTH
 });
-const droplet = new DropletDetail();
 const halo = new HaloOverview();
 chase.setVisible(false);
-scene.add(overview.group, chase.group, droplet.group, halo.group);
+halo.setVisible(false);
+scene.add(rainbowJourney.group, chase.group, halo.group);
 
 let chaseBaseline: ChaseSnapshot = new RainbowChaseModel({
   order: state.order,
@@ -157,27 +171,34 @@ let chaseBaseline: ChaseSnapshot = new RainbowChaseModel({
   sunAzimuthDeg: CHASE_SUN_AZIMUTH
 }).snapshot(0);
 
-const sceneRegistry = { overview, chase, droplet, halo } as const;
+const RAINBOW_OVERVIEW_TARGET = new THREE.Vector3(
+  OBSERVER_OPTICAL_ORIGIN.x,
+  OBSERVER_OPTICAL_ORIGIN.y,
+  OBSERVER_OPTICAL_ORIGIN.z
+);
+const DEFAULT_RAINBOW_DIRECTION = new THREE.Vector3(18, 9.4, 24).normalize();
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+let applyingSemanticZoom = false;
+let rainbowAnimationFrame = 0;
+let lastRainbowChapter: RainbowZoomChapter | null = null;
+
+function isRainbowView(view: ViewName): boolean {
+  return view === "overview" || view === "droplet";
+}
 
 function cameraDistance(): number {
   return camera.position.distanceTo(controls.target);
 }
 
 function setCameraDistance(multiplier: number): void {
-  if (
-    state.view === "overview" &&
-    multiplier < 1 &&
-    cameraDistance() <= controls.minDistance + 0.5
-  ) {
-    setView("droplet");
-    return;
-  }
-  if (
-    state.view === "droplet" &&
-    multiplier > 1 &&
-    cameraDistance() >= controls.maxDistance - 0.6
-  ) {
-    setView("overview");
+  if (isRainbowView(state.view)) {
+    cancelRainbowAnimation();
+    const distance = THREE.MathUtils.clamp(
+      cameraDistance() * multiplier,
+      RAINBOW_CAMERA_NEAR,
+      RAINBOW_CAMERA_FAR
+    );
+    applyRainbowProgress(progressFromCameraDistance(distance));
     return;
   }
   const offset = camera.position.clone().sub(controls.target);
@@ -191,22 +212,131 @@ function setCameraDistance(multiplier: number): void {
   updateCameraReadout();
 }
 
+function setActiveTab(view: ViewName, scrollIntoView = false): void {
+  document.querySelectorAll<HTMLButtonElement>(".mode-tab[data-view]").forEach((button) => {
+    const active = button.dataset.view === view;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+    if (active && scrollIntoView) button.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+}
+
+function rainbowTabForChapter(chapter: RainbowZoomChapter): "overview" | "droplet" {
+  return chapter === "overview" || chapter === "contributor" ? "overview" : "droplet";
+}
+
+function updateRainbowProgressUi(frame: RainbowZoomFrame): void {
+  const slider = requireElement<HTMLInputElement>("#semantic-zoom");
+  const output = requireElement<HTMLOutputElement>("#semantic-zoom-value");
+  const mobileSlider = requireElement<HTMLInputElement>("#mobile-semantic-zoom");
+  const mobileOutput = requireElement<HTMLOutputElement>("#mobile-semantic-zoom-value");
+  const percent = Math.round(frame.progress * 100);
+  slider.value = String(Math.round(frame.progress * 1_000));
+  slider.setAttribute(
+    "aria-valuetext",
+    `${RAINBOW_CHAPTER_LABELS[frame.chapter]}、意味ズーム${percent}パーセント`
+  );
+  output.value = `${RAINBOW_CHAPTER_LABELS[frame.chapter]} ${percent}%`;
+  mobileSlider.value = slider.value;
+  mobileSlider.setAttribute("aria-valuetext", slider.getAttribute("aria-valuetext") ?? "");
+  mobileOutput.value = `${percent}%`;
+  setText(
+    "#scale-readout",
+    `意味スケール指標 約${formatSemanticSpan(frame.semanticSpanM)}相当 / 水滴径 2.0 mm模型`
+  );
+  setText(
+    "#view-state",
+    `${RAINBOW_CHAPTER_LABELS[frame.chapter]} / 同じ代表水滴 ${rainbowJourney.getFocusSnapshot().id}`
+  );
+  setText("#focus-particle", frame.progress < 0.72 ? "代表光線まで" : "虹の全景へ");
+
+  if (frame.chapter !== lastRainbowChapter) {
+    lastRainbowChapter = frame.chapter;
+    state.view = rainbowTabForChapter(frame.chapter);
+    setActiveTab(state.view);
+    renderControlVisibility();
+    updateRainbowExplanation(frame);
+    setText(
+      "#zoom-status",
+      `${RAINBOW_CHAPTER_LABELS[frame.chapter]}。意味スケール指標は約${formatSemanticSpan(frame.semanticSpanM)}相当です。`
+    );
+  }
+  updateCameraReadout();
+}
+
+function applyRainbowProgress(progress: number, fromControls = false): void {
+  const frame = rainbowZoomFrame(progress);
+  const offset = camera.position.clone().sub(controls.target);
+  const direction = offset.lengthSq() > 1e-12
+    ? offset.normalize()
+    : DEFAULT_RAINBOW_DIRECTION.clone();
+  const distance = fromControls
+    ? THREE.MathUtils.clamp(cameraDistance(), RAINBOW_CAMERA_NEAR, RAINBOW_CAMERA_FAR)
+    : cameraDistanceFromProgress(frame.progress);
+  const target = RAINBOW_OVERVIEW_TARGET.clone().lerp(
+    rainbowJourney.getFocusPosition(),
+    frame.targetBlend
+  );
+
+  state.rainbowZoom = frame.progress;
+  rainbowJourney.applyZoom(frame);
+  applyingSemanticZoom = true;
+  controls.minDistance = RAINBOW_CAMERA_NEAR;
+  controls.maxDistance = RAINBOW_CAMERA_FAR;
+  controls.target.copy(target);
+  camera.position.copy(target).addScaledVector(direction, distance);
+  controls.update();
+  applyingSemanticZoom = false;
+  updateRainbowProgressUi(frame);
+  requestRender();
+}
+
+function cancelRainbowAnimation(): void {
+  if (!rainbowAnimationFrame) return;
+  cancelAnimationFrame(rainbowAnimationFrame);
+  rainbowAnimationFrame = 0;
+}
+
+function animateRainbowProgress(targetProgress: number): void {
+  cancelRainbowAnimation();
+  const target = THREE.MathUtils.clamp(targetProgress, 0, 1);
+  const start = state.rainbowZoom;
+  const difference = target - start;
+  if (Math.abs(difference) < 1e-4 || prefersReducedMotion.matches) {
+    applyRainbowProgress(target);
+    return;
+  }
+  const startedAt = performance.now();
+  const duration = Math.max(300, Math.abs(difference) * 900);
+  const step = (now: number): void => {
+    const unit = THREE.MathUtils.clamp((now - startedAt) / duration, 0, 1);
+    const eased = unit * unit * (3 - 2 * unit);
+    applyRainbowProgress(start + difference * eased);
+    if (unit < 1) rainbowAnimationFrame = requestAnimationFrame(step);
+    else rainbowAnimationFrame = 0;
+  };
+  rainbowAnimationFrame = requestAnimationFrame(step);
+}
+
 function resetCamera(): void {
-  if (state.view === "overview") {
-    camera.position.set(18, 10, 24);
-    controls.target.set(0, 0.6, 0);
-    controls.minDistance = 8;
-    controls.maxDistance = 62;
+  if (isRainbowView(state.view)) {
+    const frame = rainbowZoomFrame(state.rainbowZoom);
+    const target = RAINBOW_OVERVIEW_TARGET.clone().lerp(
+      rainbowJourney.getFocusPosition(),
+      frame.targetBlend
+    );
+    controls.target.copy(target);
+    camera.position.copy(target).addScaledVector(
+      DEFAULT_RAINBOW_DIRECTION,
+      cameraDistanceFromProgress(frame.progress)
+    );
+    controls.minDistance = RAINBOW_CAMERA_NEAR;
+    controls.maxDistance = RAINBOW_CAMERA_FAR;
   } else if (state.view === "chase") {
     camera.position.set(12, 8, 17);
     controls.target.set(0, 2.2, 0);
     controls.minDistance = 6;
     controls.maxDistance = 44;
-  } else if (state.view === "droplet") {
-    camera.position.set(0.8, 0.7, 12.8);
-    controls.target.set(0, 0, 0);
-    controls.minDistance = 4.7;
-    controls.maxDistance = 28;
   } else {
     camera.position.set(18, 10, 24);
     controls.target.set(0, 1.2, 0);
@@ -218,10 +348,10 @@ function resetCamera(): void {
 }
 
 function focusCurrentParticle(): void {
-  if (state.view === "overview" || state.view === "chase") {
+  if (isRainbowView(state.view)) {
+    animateRainbowProgress(state.rainbowZoom < 0.72 ? 0.86 : 0);
+  } else if (state.view === "chase") {
     setView("droplet");
-  } else if (state.view === "droplet") {
-    setView("overview");
   } else {
     controls.target.set(3.8, 2.35, 1.2);
     camera.position.set(9.4, 6.2, 8.8);
@@ -233,14 +363,13 @@ function focusCurrentParticle(): void {
 }
 
 function syncCurrentScene(): void {
-  if (state.view === "overview") {
-    overview.setConditions(state.order, state.sunElevation, state.sunAzimuth);
-    overview.setDensity(state.particleDensity);
+  if (isRainbowView(state.view)) {
+    rainbowJourney.setConditions(state.order, state.sunElevation, state.sunAzimuth);
+    rainbowJourney.setDensity(state.particleDensity);
+    rainbowJourney.applyZoom(rainbowZoomFrame(state.rainbowZoom));
   } else if (state.view === "chase") {
     chase.setOrder(state.order);
     chase.setObserverDistance(state.observerDistanceM);
-  } else if (state.view === "droplet") {
-    droplet.setOrder(state.order);
   } else {
     halo.setConditions(state.haloPhenomenon, state.sunElevation, state.sunAzimuth);
     halo.setDensity(state.particleDensity);
@@ -250,7 +379,8 @@ function syncCurrentScene(): void {
 function renderControlVisibility(): void {
   const isChase = state.view === "chase";
   const isHalo = state.view === "halo";
-  const usesDensity = state.view === "overview" || isHalo;
+  const isRainbow = isRainbowView(state.view);
+  const usesDensity = isRainbow || isHalo;
   setHidden("#order-controls", isHalo);
   setHidden("#elevation-control", isChase);
   setHidden("#azimuth-control", isChase);
@@ -259,29 +389,55 @@ function renderControlVisibility(): void {
   setHidden("#halo-controls", !isHalo);
   setHidden("#chase-data", !isChase);
 
-  setText(
-    "#focus-particle",
-    state.view === "droplet"
-      ? "虹の全景へ"
-      : state.view === "halo"
-        ? "氷晶へ寄る"
-        : "水滴1粒へ"
-  );
+  if (isHalo) setText("#focus-particle", "氷晶へ寄る");
+  else if (!isRainbowView(state.view)) setText("#focus-particle", "水滴・光路へ");
+  const zoomInLabel = isRainbow ? "水滴の光路側へ拡大" : "模型を拡大";
+  const zoomOutLabel = isRainbow ? "虹の全景側へ縮小" : "模型を縮小";
+  for (const selector of ["#zoom-in", "#mobile-zoom-in"]) {
+    requireElement<HTMLButtonElement>(selector).setAttribute("aria-label", zoomInLabel);
+  }
+  for (const selector of ["#zoom-out", "#mobile-zoom-out"]) {
+    requireElement<HTMLButtonElement>(selector).setAttribute("aria-label", zoomOutLabel);
+  }
+  requireElement<HTMLInputElement>("#semantic-zoom").disabled = !isRainbow;
+  requireElement<HTMLInputElement>("#mobile-semantic-zoom").disabled = !isRainbow;
+  setText("#semantic-zoom-label", isRainbow ? "虹から光路まで" : "虹モードで使用");
+  setText("#mobile-semantic-zoom-label", isRainbow ? "虹→水滴→光路" : "虹モードで使用");
+  if (!isRainbow) {
+    requireElement<HTMLOutputElement>("#semantic-zoom-value").value = "—";
+    requireElement<HTMLOutputElement>("#mobile-semantic-zoom-value").value = "—";
+  }
 }
 
 function setView(view: ViewName): void {
+  const wasRainbow = isRainbowView(state.view);
+  if (isRainbowView(view)) {
+    rainbowJourney.setVisible(true);
+    chase.setVisible(false);
+    halo.setVisible(false);
+    if (!wasRainbow) {
+      state.view = view;
+      syncCurrentScene();
+      lastRainbowChapter = null;
+      const targetProgress = view === "overview" ? 0 : 0.86;
+      controls.target.copy(RAINBOW_OVERVIEW_TARGET);
+      camera.position.copy(RAINBOW_OVERVIEW_TARGET).addScaledVector(
+        DEFAULT_RAINBOW_DIRECTION,
+        cameraDistanceFromProgress(targetProgress)
+      );
+      applyRainbowProgress(targetProgress);
+    } else {
+      animateRainbowProgress(view === "overview" ? 0 : 0.86);
+    }
+    return;
+  }
+
+  cancelRainbowAnimation();
   state.view = view;
-  (Object.entries(sceneRegistry) as [ViewName, (typeof sceneRegistry)[ViewName]][]).forEach(
-    ([name, entry]) => entry.setVisible(name === view)
-  );
-
-  document.querySelectorAll<HTMLButtonElement>(".mode-tab[data-view]").forEach((button) => {
-    const active = button.dataset.view === view;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", String(active));
-    if (active) button.scrollIntoView({ block: "nearest", inline: "nearest" });
-  });
-
+  rainbowJourney.setVisible(false);
+  chase.setVisible(view === "chase");
+  halo.setVisible(view === "halo");
+  setActiveTab(view, true);
   renderControlVisibility();
   syncCurrentScene();
   resetCamera();
@@ -289,28 +445,31 @@ function setView(view: ViewName): void {
   requestRender();
 }
 
-function updateRainbowExplanation(): void {
+function updateRainbowExplanation(
+  frame: RainbowZoomFrame = rainbowZoomFrame(state.rainbowZoom)
+): void {
   const range = rainbowAngleRange(state.order);
   const isPrimary = state.order === 1;
   const orderLabel = isPrimary ? "一次虹" : "二次虹";
-  setText("#angle-label", `${orderLabel}の角半径`);
-  setText("#angle-value", `${range.minimumDeg.toFixed(1)}°–${range.maximumDeg.toFixed(1)}°`);
+  const middle = SPECTRAL_SAMPLES[3];
+  if (!middle) throw new Error("representative spectral sample is missing");
+  const ray = findStationaryRay(middle.waterIndex, state.order);
+  const fresnel = fresnelPower(ray.refractionDeg, middle.waterIndex, 1);
+  const focus = rainbowJourney.getFocusSnapshot();
+  const isFar = frame.chapter === "overview" || frame.chapter === "contributor";
+
+  setText("#angle-label", isFar ? `${orderLabel}の角半径` : "代表光線 530 nmの虹角");
+  setText(
+    "#angle-value",
+    isFar
+      ? `${range.minimumDeg.toFixed(1)}°–${range.maximumDeg.toFixed(1)}°`
+      : `${ray.radiusDeg.toFixed(3)}°`
+  );
   setText(
     "#angle-context",
-    state.view === "overview"
+    isFar
       ? rainbowVisibilityNote(state.order, state.sunElevation)
-      : isPrimary
-        ? "赤が外側・紫が内側。水滴内の代表7波長を分けて表示します。"
-        : "一次虹より外側で色順が逆。赤が内側・紫が外側です。"
-  );
-  setFacts(
-    ["中心", "内部反射", "赤 656.3 nm", "紫 404.7 nm"],
-    [
-      "観察者の反太陽点",
-      `${state.order}回（部分反射）`,
-      `${range.redDeg.toFixed(1)}°`,
-      `${range.violetDeg.toFixed(1)}°`
-    ]
+      : `入射角 ${ray.incidenceDeg.toFixed(2)}° → 水中 ${ray.refractionDeg.toFixed(2)}°。虹角付近に光線束が集中する停留光線です。`
   );
   setText(
     "#reflection-note",
@@ -319,41 +478,97 @@ function updateRainbowExplanation(): void {
       : "水滴内で2回の部分反射。色順が逆になり、赤が内側。"
   );
 
-  if (state.view === "overview") {
-    setText("#scene-kicker", "RAIN FIELD → RAINBOW");
-    setText("#scene-title", "無数の水滴がつくる「見える角度」");
-    setText("#scale-readout", "雨域：数百m");
-    setText(
-      "#view-state",
-      `${orderLabel} ${range.minimumDeg.toFixed(1)}°–${range.maximumDeg.toFixed(1)}° / 観察者中心の円錐`
-    );
-    setText("#explanation-title", "虹は空に貼り付いた物体ではない");
-    setText(
-      "#explanation-body",
-      "反太陽方向へ計算角で光を返す水滴だけが虹の一部になります。全円錐は外から確認する幾何模型で、実際の空では地平線より上の部分だけが見えます。"
-    );
-  } else {
-    const middle = SPECTRAL_SAMPLES[3];
-    const ray = middle ? findStationaryRay(middle.waterIndex, state.order) : null;
-    setText("#scene-kicker", "ONE DROPLET → LIGHT PATH");
-    setText("#scene-title", "1粒の中で、光はどう曲がる？");
-    setText("#scale-readout", "代表水滴：数mm");
-    setText("#view-state", `屈折 → ${state.order}回の部分反射 → 屈折`);
-    setText("#explanation-title", `${state.order}回反射する代表光路`);
-    setText(
-      "#explanation-body",
-      ray
-        ? `緑 ${middle?.wavelengthNm ?? 530} nmでは、入射角${ray.incidenceDeg.toFixed(1)}°、水中の屈折角${ray.refractionDeg.toFixed(1)}°付近で光が集中します。内部反射は全反射ではなく部分反射です。`
-        : "代表波長の光路を計算できませんでした。"
-    );
+  switch (frame.chapter) {
+    case "overview":
+      setText("#scene-kicker", "RAIN FIELD → RAINBOW");
+      setText("#scene-title", "無数の水滴がつくる「見える角度」");
+      setFacts(
+        ["中心", "内部反射", "赤 656.3 nm", "紫 404.7 nm"],
+        [
+          "観察者の反太陽点",
+          `${state.order}回（部分反射）`,
+          `${range.redDeg.toFixed(1)}°`,
+          `${range.violetDeg.toFixed(1)}°`
+        ]
+      );
+      setText("#explanation-title", "虹は空に貼り付いた物体ではない");
+      setText(
+        "#explanation-body",
+        "観察者を頂点とする円錐上で、計算角へ光を返す多数の水滴が虹を構成します。ズームすると、その条件を満たす代表水滴を入れ替えずに追跡します。"
+      );
+      break;
+    case "contributor":
+      setText("#scene-kicker", "RAINBOW → CONTRIBUTING DROP");
+      setText("#scene-title", "虹をつくる同じ1滴を追い続ける");
+      setFacts(
+        ["代表水滴ID", "代表波長", "虹角", "配置距離"],
+        [focus.id, `${focus.wavelengthNm} nm`, `${focus.rainbowRadiusDeg.toFixed(3)}°`, "理解用（固有距離なし）"]
+      );
+      setText("#explanation-title", "角度条件は正確、置いた距離は説明用");
+      setText(
+        "#explanation-body",
+        "強調した水滴は530 nmの虹円錐上にあります。ただし虹に固有の距離はないため、この雨域内の位置は連続観察のための模型です。"
+      );
+      break;
+    case "droplet":
+      setText("#scene-kicker", "SAME DROP → 2 mm MODEL");
+      setText("#scene-title", "位置を保ったまま、水滴表面が見えてくる");
+      setFacts(
+        ["水滴模型", "入射角", "水中の屈折角", "内部反射"],
+        ["直径2.0 mm・球形", `${ray.incidenceDeg.toFixed(2)}°`, `${ray.refractionDeg.toFixed(2)}°`, `${state.order}回（部分反射）`]
+      );
+      setText("#explanation-title", "実寸差は局所模型へ連続に再正規化");
+      setText(
+        "#explanation-body",
+        "画面上は途切れませんが、数百mとmmを同じ実寸座標へ無理に置かず、選択水滴を中心とする局所模型へ滑らかに移します。"
+      );
+      break;
+    case "ray":
+      setText("#scene-kicker", "ONE CAUSTIC RAY → REFRACTION");
+      setText("#scene-title", "まず1本の代表光線を、順番にたどる");
+      setFacts(
+        ["代表光線", "入射角", "水中の屈折角", "内部反射"],
+        [`${middle.wavelengthNm} nm`, `${ray.incidenceDeg.toFixed(2)}°`, `${ray.refractionDeg.toFixed(2)}°`, `${state.order}回（部分反射）`]
+      );
+      setText("#explanation-title", "入射 → 屈折 → 部分反射 → 射出");
+      setText(
+        "#explanation-body",
+        "黄色から緑へ続く線は虹角付近に光が集中する代表的な幾何光線です。1個の光子や実際の光束幅を表す線ではありません。"
+      );
+      break;
+    case "dispersion":
+      setText("#scene-kicker", "DISPERSION + PARTIAL TRANSMISSION");
+      setText("#scene-title", "波長差と、この虹次数から外れる透過光を見る");
+      setFacts(
+        ["代表7波長", "内部界面 Rs", "内部界面 Rp", "内部界面平均"],
+        [
+          "404.7–656.3 nm",
+          `${(fresnel.sReflectance * 100).toFixed(1)}%`,
+          `${(fresnel.pReflectance * 100).toFixed(2)}%`,
+          `${(fresnel.unpolarizedReflectance * 100).toFixed(1)}% / 1面`
+        ]
+      );
+      setText("#explanation-title", "破線の枝は、部分反射で外へ透過する光");
+      setText(
+        "#explanation-body",
+        "表示値は内部反射面1面だけのFresnel反射率で、入射面・射出面の損失は未算入です。橙色の破線は、この虹次数の経路から外れる透過枝です。線の明るさは率に比例しません。色線は代表サンプルで、虹が7本だけという意味ではありません。"
+      );
+      break;
   }
 
-  setText("#fps-state", "WebGL 2 / 代表7波長");
+  setText(
+    "#fps-state",
+    frame.chapter === "dispersion" ? "解析式 / 代表7波長" : "連続LOD / 代表530 nm"
+  );
+  setText(
+    "#semantic-note",
+    "約300 m相当から水滴内部までを見失わず学ぶ対数的な「意味ズーム」です。同じ代表水滴を追跡しながら局所模型へ連続に再正規化します。数値はカメラ画角や画面寸法から校正した実測縮尺ではありません。"
+  );
   setModelItems([
-    "球形水滴・幾何光学・空気の屈折率を1とする近似です。",
-    "代表波長404.7–656.3 nmの水の分散を使います。",
-    "波動光学が必要な過剰虹・干渉・偏光・絶対輝度は未計算です。",
-    "雨滴密度と全円錐表示は理解用で、実際の降水量や可視範囲ではありません。"
+    "同じ代表水滴IDを保ち、約300 m相当から水滴内部まで対数的な意味ズームで再正規化します。数値は実測縮尺ではありません。",
+    "直径2.0 mmの球形水滴・幾何光学・空気の屈折率を1とする近似です。実際の大粒雨滴は扁平・非対称になります。",
+    "停留光線は解析式で求め、内部反射面1面のFresnel反射率を表示します。入射・射出面の損失、線の強度と幅、水滴配置距離は模式または未計算です。",
+    "過剰虹・干渉・回折・太陽視直径によるぼけ・絶対輝度にはAiry／Lorenz–Mie等の波動光学が必要で、未計算です。"
   ]);
 }
 
@@ -393,6 +608,10 @@ function updateChaseExplanation(): void {
   setText(
     "#explanation-body",
     "固定した雨滴場の中で観察者だけを動かすと、開始時と同じ水滴が一部残る場合もありますが、計算角に入る集合は変化します。虹は観察者ごとに選び直される光の方向です。"
+  );
+  setText(
+    "#semantic-note",
+    "固定した有限の雨滴場を観察者が移動する数値実験です。画面の模型距離はThree.js内の表示単位で、虹までの物理距離ではありません。"
   );
   setText("#chase-position-value", `${snapshot.observerDistanceM.toFixed(0)} m`);
   setText("#chase-angle-value", `${snapshot.rainbowRadiusDeg.toFixed(6)}°`);
@@ -473,6 +692,10 @@ function updateHaloExplanation(): void {
     "#explanation-body",
     `${phenomenon.modelNoticeJa} ${snapshot.representativeRayGuideNoticeJa}`
   );
+  setText(
+    "#semantic-note",
+    "空の角度配置と氷晶の局所模型を同時に見せる教育用スケールです。計算したリングと、向き依存現象の模式表示を区別しています。"
+  );
   setText("#halo-model-note", `${phenomenon.modelNoticeJa} ${snapshot.availabilityNoticeJa}`);
   setModelItems([
     computedRing
@@ -491,9 +714,24 @@ function updateExplanation(): void {
 }
 
 function updateCurrentConditions(): void {
+  const previousFocusId = isRainbowView(state.view)
+    ? rainbowJourney.getFocusSnapshot().id
+    : null;
   syncCurrentScene();
-  updateExplanation();
-  requestRender();
+  if (isRainbowView(state.view)) {
+    applyRainbowProgress(state.rainbowZoom);
+    updateRainbowExplanation();
+    const nextFocusId = rainbowJourney.getFocusSnapshot().id;
+    if (previousFocusId && previousFocusId !== nextFocusId) {
+      setText(
+        "#zoom-status",
+        `条件変更により、寄与する代表水滴を ${nextFocusId} へ選び直しました。`
+      );
+    }
+  } else {
+    updateExplanation();
+    requestRender();
+  }
 }
 
 function updateCameraReadout(): void {
@@ -503,7 +741,9 @@ function updateCameraReadout(): void {
   const elevation = 90 - THREE.MathUtils.radToDeg(spherical.phi);
   setText(
     "#camera-readout",
-    `方位 ${azimuth.toFixed(0)}° / 仰角 ${elevation.toFixed(0)}° / 距離 ${spherical.radius.toFixed(1)}`
+    isRainbowView(state.view)
+      ? `方位 ${azimuth.toFixed(0)}° / 仰角 ${elevation.toFixed(0)}° / 意味ズーム ${Math.round(state.rainbowZoom * 100)}%`
+      : `方位 ${azimuth.toFixed(0)}° / 仰角 ${elevation.toFixed(0)}° / 模型距離 ${spherical.radius.toFixed(1)}`
   );
 }
 
@@ -569,7 +809,7 @@ densityInput.addEventListener("input", () => {
   state.particleDensity = Number(densityInput.value) / 100;
   requireElement<HTMLOutputElement>("#particle-density-value").value = `${densityInput.value}%`;
   densityInput.setAttribute("aria-valuetext", `${densityInput.value}パーセント`);
-  if (state.view === "overview") overview.setDensity(state.particleDensity);
+  if (isRainbowView(state.view)) rainbowJourney.setDensity(state.particleDensity);
   else if (state.view === "halo") halo.setDensity(state.particleDensity);
   requestRender();
 });
@@ -600,40 +840,75 @@ haloTypeSelect.addEventListener("change", () => {
 
 requireElement<HTMLButtonElement>("#reset-view").addEventListener("click", resetCamera);
 requireElement<HTMLButtonElement>("#focus-particle").addEventListener("click", focusCurrentParticle);
-requireElement<HTMLButtonElement>("#zoom-in").addEventListener("click", () => setCameraDistance(0.8));
-requireElement<HTMLButtonElement>("#zoom-out").addEventListener("click", () => setCameraDistance(1.25));
+requireElement<HTMLButtonElement>("#zoom-in").addEventListener("click", () => setCameraDistance(0.9));
+requireElement<HTMLButtonElement>("#zoom-out").addEventListener("click", () => setCameraDistance(1.1));
+
+const semanticZoomInput = requireElement<HTMLInputElement>("#semantic-zoom");
+const mobileSemanticZoomInput = requireElement<HTMLInputElement>("#mobile-semantic-zoom");
+for (const input of [semanticZoomInput, mobileSemanticZoomInput]) {
+  input.addEventListener("input", () => {
+    if (!isRainbowView(state.view)) setView("overview");
+    cancelRainbowAnimation();
+    applyRainbowProgress(Number(input.value) / 1_000);
+  });
+  input.addEventListener("change", () => {
+    const frame = rainbowZoomFrame(state.rainbowZoom);
+    setText(
+      "#zoom-status",
+      `${RAINBOW_CHAPTER_LABELS[frame.chapter]}。意味ズーム${Math.round(frame.progress * 100)}パーセントです。`
+    );
+  });
+}
+requireElement<HTMLButtonElement>("#mobile-zoom-in").addEventListener("click", () =>
+  setCameraDistance(0.9)
+);
+requireElement<HTMLButtonElement>("#mobile-zoom-out").addEventListener("click", () =>
+  setCameraDistance(1.1)
+);
+
 controls.addEventListener("change", () => {
+  if (isRainbowView(state.view) && !applyingSemanticZoom) {
+    cancelRainbowAnimation();
+    applyRainbowProgress(progressFromCameraDistance(cameraDistance()), true);
+    return;
+  }
   updateCameraReadout();
   requestRender();
 });
 
-let semanticWheelTimer = 0;
 canvas.addEventListener(
   "wheel",
   (event) => {
-    window.clearTimeout(semanticWheelTimer);
-    semanticWheelTimer = window.setTimeout(() => {
-      if (state.view === "overview" && event.deltaY < 0 && cameraDistance() <= controls.minDistance + 0.5) {
-        setView("droplet");
-      } else if (
-        state.view === "droplet" &&
-        event.deltaY > 0 &&
-        cameraDistance() >= controls.maxDistance - 0.6
-      ) {
-        setView("overview");
-      }
-    }, 70);
+    if (event.ctrlKey || event.metaKey) {
+      event.stopImmediatePropagation();
+      return;
+    }
+    if (!isRainbowView(state.view)) return;
+    cancelRainbowAnimation();
+    const atNearEdge = cameraDistance() <= RAINBOW_CAMERA_NEAR + 0.01 && event.deltaY < 0;
+    const atFarEdge = cameraDistance() >= RAINBOW_CAMERA_FAR - 0.01 && event.deltaY > 0;
+    if (atNearEdge || atFarEdge) event.stopImmediatePropagation();
   },
-  { passive: true }
+  { capture: true, passive: true }
 );
+
+canvas.addEventListener("pointerdown", cancelRainbowAnimation, { passive: true });
 
 canvas.addEventListener("keydown", (event) => {
   if (event.key === "ArrowLeft") rotateCamera(-0.1, 0);
   else if (event.key === "ArrowRight") rotateCamera(0.1, 0);
   else if (event.key === "ArrowUp") rotateCamera(0, -0.08);
   else if (event.key === "ArrowDown") rotateCamera(0, 0.08);
-  else if (event.key === "+" || event.key === "=") setCameraDistance(0.8);
-  else if (event.key === "-" || event.key === "_") setCameraDistance(1.25);
+  else if (event.key === "+" || event.key === "=") setCameraDistance(0.9);
+  else if (event.key === "-" || event.key === "_") setCameraDistance(1.1);
+  else if (event.key === "PageUp" && isRainbowView(state.view)) {
+    cancelRainbowAnimation();
+    applyRainbowProgress(state.rainbowZoom + 0.12);
+  } else if (event.key === "PageDown" && isRainbowView(state.view)) {
+    cancelRainbowAnimation();
+    applyRainbowProgress(state.rainbowZoom - 0.12);
+  } else if (event.key === "Home" && isRainbowView(state.view)) animateRainbowProgress(0);
+  else if (event.key === "End" && isRainbowView(state.view)) animateRainbowProgress(1);
   else if (event.key === "Home") resetCamera();
   else return;
   event.preventDefault();
@@ -686,11 +961,10 @@ function disposeApp(): void {
   cancelAnimationFrame(resizeFrame);
   cancelAnimationFrame(renderFrame);
   cancelAnimationFrame(pendingChaseFrame);
-  window.clearTimeout(semanticWheelTimer);
+  cancelRainbowAnimation();
   controls.dispose();
-  overview.dispose();
+  rainbowJourney.dispose();
   chase.dispose();
-  droplet.dispose();
   halo.dispose();
   renderer?.dispose();
 }

@@ -27,6 +27,21 @@ export interface StationaryRay {
 export interface DropletRayTrace extends StationaryRay {
   readonly points: readonly Vec2[];
   readonly outgoing: Vec2;
+  readonly lossBranches: readonly DropletLossBranch[];
+}
+
+export interface DropletLossBranch {
+  readonly reflectionIndex: number;
+  readonly start: Vec2;
+  readonly end: Vec2;
+  readonly outgoing: Vec2;
+}
+
+export interface FresnelPower {
+  readonly sReflectance: number;
+  readonly pReflectance: number;
+  readonly unpolarizedReflectance: number;
+  readonly unpolarizedTransmittance: number;
 }
 
 // Fixed visible-spectrum samples for the educational beta. The values follow
@@ -92,6 +107,52 @@ export function rainbowRadiusRadians(
   return Math.PI + 2 * incidenceRadians - 6 * refraction;
 }
 
+export function fresnelPower(
+  incidenceDeg: number,
+  refractiveIndexFrom: number,
+  refractiveIndexTo: number
+): FresnelPower {
+  if (!(refractiveIndexFrom > 0) || !(refractiveIndexTo > 0)) {
+    throw new RangeError("refractive indices must be positive");
+  }
+  const incidence = radians(incidenceDeg);
+  if (incidence < 0 || incidence > Math.PI / 2) {
+    throw new RangeError("incidence angle must be between 0 and 90 degrees");
+  }
+  const transmittedSine =
+    (refractiveIndexFrom / refractiveIndexTo) * Math.sin(incidence);
+  if (transmittedSine >= 1) {
+    return {
+      sReflectance: 1,
+      pReflectance: 1,
+      unpolarizedReflectance: 1,
+      unpolarizedTransmittance: 0
+    };
+  }
+  const transmitted = Math.asin(transmittedSine);
+  const cosineIncident = Math.cos(incidence);
+  const cosineTransmitted = Math.cos(transmitted);
+  const sAmplitude =
+    (refractiveIndexFrom * cosineIncident -
+      refractiveIndexTo * cosineTransmitted) /
+    (refractiveIndexFrom * cosineIncident +
+      refractiveIndexTo * cosineTransmitted);
+  const pAmplitude =
+    (refractiveIndexTo * cosineIncident -
+      refractiveIndexFrom * cosineTransmitted) /
+    (refractiveIndexTo * cosineIncident +
+      refractiveIndexFrom * cosineTransmitted);
+  const sReflectance = sAmplitude * sAmplitude;
+  const pReflectance = pAmplitude * pAmplitude;
+  const unpolarizedReflectance = (sReflectance + pReflectance) / 2;
+  return {
+    sReflectance,
+    pReflectance,
+    unpolarizedReflectance,
+    unpolarizedTransmittance: 1 - unpolarizedReflectance
+  };
+}
+
 export function findStationaryRay(
   refractiveIndex: number,
   order: RainbowOrder
@@ -101,34 +162,14 @@ export function findStationaryRay(
   const cached = stationaryRayCache.get(cacheKey);
   if (cached) return cached;
 
-  const epsilon = 1e-7;
-  const samples = 12_000;
-  const step = (Math.PI / 2 - 2 * epsilon) / samples;
-  let bestIncidence = epsilon;
-  let bestRadius = rainbowRadiusRadians(refractiveIndex, order, bestIncidence);
-  for (let index = 1; index <= samples; index += 1) {
-    const incidence = epsilon + index * step;
-    const radius = rainbowRadiusRadians(refractiveIndex, order, incidence);
-    const improves = order === 1 ? radius > bestRadius : radius < bestRadius;
-    if (improves) {
-      bestIncidence = incidence;
-      bestRadius = radius;
-    }
+  // dD/di = 0 gives cos²(i) = (n² - 1) / (k(k + 2)), where k is
+  // the number of internal reflections. This is the rainbow caustic ray.
+  const cosineSquared =
+    (refractiveIndex * refractiveIndex - 1) / (order * (order + 2));
+  if (!(cosineSquared > 0 && cosineSquared < 1)) {
+    throw new RangeError("refractive index does not produce this stationary rainbow ray");
   }
-
-  let lower = Math.max(epsilon, bestIncidence - step * 3);
-  let upper = Math.min(Math.PI / 2 - epsilon, bestIncidence + step * 3);
-  for (let iteration = 0; iteration < 64; iteration += 1) {
-    const left = lower + (upper - lower) / 3;
-    const right = upper - (upper - lower) / 3;
-    const leftRadius = rainbowRadiusRadians(refractiveIndex, order, left);
-    const rightRadius = rainbowRadiusRadians(refractiveIndex, order, right);
-    const moveLower = order === 1 ? leftRadius < rightRadius : leftRadius > rightRadius;
-    if (moveLower) lower = left;
-    else upper = right;
-  }
-
-  const incidence = (lower + upper) / 2;
+  const incidence = Math.acos(Math.sqrt(cosineSquared));
   const refraction = Math.asin(Math.sin(incidence) / refractiveIndex);
   const radius = rainbowRadiusRadians(refractiveIndex, order, incidence);
   const result = Object.freeze({
@@ -165,11 +206,21 @@ export function traceDropletRay(
   if (!inside) throw new Error("unexpected total internal reflection at droplet entry");
 
   const points: Vec2[] = [beforeEntry, entry];
+  const lossBranches: DropletLossBranch[] = [];
   let point = entry;
   let direction = inside;
   for (let reflection = 0; reflection < order; reflection += 1) {
     point = nextCircleIntersection(point, direction);
     points.push(point);
+    const escaped = refract2D(direction, scale(point, -1), refractiveIndex, 1);
+    if (escaped) {
+      lossBranches.push({
+        reflectionIndex: reflection + 1,
+        start: point,
+        end: add(point, scale(escaped, 1.45)),
+        outgoing: escaped
+      });
+    }
     direction = reflect2D(direction, point);
   }
 
@@ -179,7 +230,7 @@ export function traceDropletRay(
   if (!outgoing) throw new Error("unexpected total internal reflection at droplet exit");
   points.push(add(point, scale(outgoing, 1.9)));
 
-  return { ...stationary, points, outgoing };
+  return { ...stationary, points, outgoing, lossBranches };
 }
 
 export function rainbowAngleRange(order: RainbowOrder): {

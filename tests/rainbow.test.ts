@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   SPECTRAL_SAMPLES,
   findStationaryRay,
+  fresnelPower,
   prismMinimumDeviationDeg,
   rainbowAngleRange,
   reflect2D,
@@ -65,6 +66,43 @@ test("stationary 589 nm-like ray gives the expected geometric angles", () => {
   assert.ok(Math.abs(secondary.radiusDeg - 50.89) < 0.03);
   assert.ok(Math.abs(primary.incidenceDeg - 59.41) < 0.05);
   assert.ok(Math.abs(secondary.incidenceDeg - 71.84) < 0.05);
+});
+
+test("analytic stationary ray is a local extremum of the deviation", () => {
+  for (const order of [1, 2] as const) {
+    const ray = findStationaryRay(1.333, order);
+    const incidence = ray.incidenceDeg * Math.PI / 180;
+    const delta = 1e-5;
+    const center = order === 1
+      ? 4 * Math.asin(Math.sin(incidence) / 1.333) - 2 * incidence
+      : Math.PI + 2 * incidence - 6 * Math.asin(Math.sin(incidence) / 1.333);
+    const left = order === 1
+      ? 4 * Math.asin(Math.sin(incidence - delta) / 1.333) - 2 * (incidence - delta)
+      : Math.PI + 2 * (incidence - delta) -
+        6 * Math.asin(Math.sin(incidence - delta) / 1.333);
+    const right = order === 1
+      ? 4 * Math.asin(Math.sin(incidence + delta) / 1.333) - 2 * (incidence + delta)
+      : Math.PI + 2 * (incidence + delta) -
+        6 * Math.asin(Math.sin(incidence + delta) / 1.333);
+    assert.ok(order === 1 ? center > left && center > right : center < left && center < right);
+  }
+});
+
+test("rainbow internal reflection is partial and conserves Fresnel power", () => {
+  const primary = findStationaryRay(1.333, 1);
+  const power = fresnelPower(primary.refractionDeg, 1.333, 1);
+  assert.ok(Math.abs(power.sReflectance - 0.111) < 0.002);
+  assert.ok(Math.abs(power.pReflectance - 0.0035) < 0.0003);
+  assert.ok(power.unpolarizedReflectance > 0 && power.unpolarizedReflectance < 1);
+  assert.ok(
+    Math.abs(power.unpolarizedReflectance + power.unpolarizedTransmittance - 1) < 1e-12
+  );
+});
+
+test("each internal reflection has a transmitted loss branch", () => {
+  const middle = SPECTRAL_SAMPLES[3]!;
+  assert.equal(traceDropletRay(middle.waterIndex, 1).lossBranches.length, 1);
+  assert.equal(traceDropletRay(middle.waterIndex, 2).lossBranches.length, 2);
 });
 
 test("hexagonal ice prism minimum deviations support 22 and 46 degree halos", () => {

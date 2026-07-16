@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import * as THREE from "three";
+import {
+  OBSERVER_OPTICAL_ORIGIN,
+  RAINBOW_CAMERA_FAR,
+  RAINBOW_CAMERA_NEAR,
+  cameraDistanceFromProgress,
+  chapterForProgress,
+  focusDropletDirection,
+  progressiveDrawCount,
+  progressFromCameraDistance,
+  rainbowZoomFrame,
+  semanticSpanM,
+  sunDirectionFromAngles
+} from "../src/physics/semanticZoom.ts";
+import { RainbowJourney } from "../src/scenes/rainbowJourney.ts";
+
+test("camera distance and semantic progress are inverse mappings", () => {
+  assert.equal(progressFromCameraDistance(RAINBOW_CAMERA_FAR), 0);
+  assert.equal(progressFromCameraDistance(RAINBOW_CAMERA_NEAR), 1);
+  for (let step = 0; step <= 100; step += 1) {
+    const progress = step / 100;
+    assert.ok(
+      Math.abs(progressFromCameraDistance(cameraDistanceFromProgress(progress)) - progress) < 1e-12
+    );
+  }
+});
+
+test("semantic scale contracts monotonically from rain field to sub-droplet view", () => {
+  let previous = Infinity;
+  for (let step = 0; step <= 1_000; step += 1) {
+    const span = semanticSpanM(step / 1_000);
+    assert.ok(Number.isFinite(span));
+    assert.ok(span <= previous);
+    previous = span;
+  }
+  assert.equal(semanticSpanM(0), 300);
+  assert.ok(Math.abs(semanticSpanM(1) - 0.00035) < 1e-15);
+});
+
+test("zoom frame is bounded, continuous, and progressively reveals the representative ray", () => {
+  let previousScale = 0;
+  let previousReveal = 0;
+  for (let step = 0; step <= 1_000; step += 1) {
+    const frame = rainbowZoomFrame(step / 1_000);
+    for (const value of [
+      frame.targetBlend,
+      frame.overviewOpacity,
+      frame.focusMarkerOpacity,
+      frame.surfaceOpacity,
+      frame.representativeRayOpacity,
+      frame.representativeRayReveal,
+      frame.spectralOpacity,
+      frame.normalOpacity,
+      frame.lossBranchOpacity
+    ]) {
+      assert.ok(value >= 0 && value <= 1);
+    }
+    assert.ok(frame.detailScale >= previousScale);
+    assert.ok(frame.representativeRayReveal >= previousReveal);
+    previousScale = frame.detailScale;
+    previousReveal = frame.representativeRayReveal;
+  }
+  assert.equal(chapterForProgress(0), "overview");
+  assert.equal(chapterForProgress(0.3), "contributor");
+  assert.equal(chapterForProgress(0.55), "droplet");
+  assert.equal(chapterForProgress(0.75), "ray");
+  assert.equal(chapterForProgress(1), "dispersion");
+});
+
+test("progressive draw count never hides the complete endpoints", () => {
+  assert.equal(progressiveDrawCount(0, 100), 2);
+  assert.equal(progressiveDrawCount(0.5, 100), 51);
+  assert.equal(progressiveDrawCount(1, 100), 100);
+  assert.equal(progressiveDrawCount(1, 0), 0);
+});
+
+test("selected droplet lies on the representative observer-centred rainbow cone", () => {
+  for (const radiusDeg of [41.8, 51.5]) {
+    const sun = sunDirectionFromAngles(12, 225);
+    const axis = { x: -sun.x, y: -sun.y, z: -sun.z };
+    const focus = focusDropletDirection(12, 225, radiusDeg);
+    const dot = axis.x * focus.x + axis.y * focus.y + axis.z * focus.z;
+    const measured = Math.acos(Math.min(1, Math.max(-1, dot))) * 180 / Math.PI;
+    assert.ok(Math.abs(measured - radiusDeg) < 1e-10);
+  }
+});
+
+test("journey uses one optical origin for the eye, sightline, and scattering geometry", () => {
+  const journey = new RainbowJourney();
+  try {
+    const eye = journey.group.getObjectByName("observer-optical-origin");
+    assert.ok(eye);
+    assert.ok(eye.position.distanceTo(OBSERVER_OPTICAL_ORIGIN) < 1e-12);
+
+    const horizon = journey.group.getObjectByName("observer-celestial-horizon");
+    assert.ok(horizon instanceof THREE.Line);
+    horizon.geometry.computeBoundingSphere();
+    assert.ok(horizon.geometry.boundingSphere);
+    assert.ok(horizon.geometry.boundingSphere.center.distanceTo(OBSERVER_OPTICAL_ORIGIN) < 1e-6);
+
+    for (const order of [1, 2] as const) {
+      journey.setConditions(order, 12, 225);
+      const snapshot = journey.getFocusSnapshot();
+      const sightline = snapshot.position.clone().sub(OBSERVER_OPTICAL_ORIGIN);
+      assert.ok(
+        Math.abs(sightline.length() - snapshot.illustrativeDistanceModelUnits) < 1e-10
+      );
+
+      const expectedOutgoing = sightline.clone().negate().normalize();
+      assert.ok(snapshot.outgoingDirection.distanceTo(expectedOutgoing) < 1e-12);
+
+      const scatteringDeg = snapshot.incomingDirection.angleTo(snapshot.outgoingDirection) *
+        180 / Math.PI;
+      assert.ok(Math.abs(scatteringDeg - (180 - snapshot.rainbowRadiusDeg)) < 1e-10);
+    }
+  } finally {
+    journey.dispose();
+  }
+});

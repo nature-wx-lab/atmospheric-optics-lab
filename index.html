@@ -44,8 +44,14 @@
         <button class="mode-tab" type="button" data-view="chase" aria-pressed="false">
           <span>02</span> 虹を追う
         </button>
-        <button class="mode-tab" type="button" data-view="droplet" aria-pressed="false">
-          <span>03</span> 水滴1粒
+        <button
+          class="mode-tab"
+          type="button"
+          data-view="droplet"
+          aria-pressed="false"
+          aria-label="虹の連続ズームを水滴と光路まで進める"
+        >
+          <span>03</span> 水滴・光路
         </button>
         <button class="mode-tab" type="button" data-view="halo" aria-pressed="false">
           <span>04</span> 氷晶とハロ
@@ -114,12 +120,28 @@
 
           <div class="operation-card">
             <strong>3D操作</strong>
-            <p>ドラッグで360°回転・ホイール／ピンチで拡大縮小</p>
+            <p>ドラッグで360°回転・ホイール／タッチ画面の2本指ピンチで連続ズーム</p>
+            <label class="slider-control semantic-zoom-control" for="semantic-zoom">
+              <span class="slider-label">
+                <span id="semantic-zoom-label">虹から光路まで</span><output id="semantic-zoom-value">虹の全景 0%</output>
+              </span>
+              <input
+                id="semantic-zoom"
+                type="range"
+                min="0"
+                max="1000"
+                step="1"
+                value="0"
+                aria-valuetext="虹の全景、意味ズーム0パーセント"
+              />
+              <span class="zoom-landmarks" aria-hidden="true"><span>雨域</span><span>水滴</span><span>光路</span></span>
+            </label>
             <div class="zoom-actions" aria-label="ズーム操作">
-              <button id="zoom-out" type="button" aria-label="縮小">−</button>
-              <button id="focus-particle" type="button">水滴1粒へ</button>
-              <button id="zoom-in" type="button" aria-label="拡大">＋</button>
+              <button id="zoom-out" type="button" aria-label="虹の全景側へ縮小">−</button>
+              <button id="focus-particle" type="button">代表光線まで</button>
+              <button id="zoom-in" type="button" aria-label="水滴の光路側へ拡大">＋</button>
             </div>
+            <p id="zoom-status" class="sr-only" aria-live="polite" aria-atomic="true">虹の全景です。</p>
           </div>
         </aside>
 
@@ -129,16 +151,32 @@
               <p id="scene-kicker" class="panel-kicker">RAIN FIELD → RAINBOW</p>
               <h2 id="scene-title">無数の水滴がつくる「見える角度」</h2>
             </div>
-            <div class="scale-readout" aria-live="polite">
-              <span>意味的な縮尺</span>
-              <strong id="scale-readout">雨域：数百m</strong>
+            <div class="scale-readout">
+              <span>表示スケール</span>
+              <strong id="scale-readout">意味スケール指標 約300 m相当 / 水滴径 2.0 mm模型</strong>
             </div>
+          </div>
+          <div class="mobile-zoom-dock" aria-label="連続ズーム操作">
+            <button id="mobile-zoom-out" type="button" aria-label="虹の全景側へ縮小">−</button>
+            <label for="mobile-semantic-zoom">
+              <span><span id="mobile-semantic-zoom-label">虹→水滴→光路</span> <output id="mobile-semantic-zoom-value">0%</output></span>
+              <input
+                id="mobile-semantic-zoom"
+                type="range"
+                min="0"
+                max="1000"
+                step="1"
+                value="0"
+                aria-valuetext="虹の全景、意味ズーム0パーセント"
+              />
+            </label>
+            <button id="mobile-zoom-in" type="button" aria-label="水滴の光路側へ拡大">＋</button>
           </div>
           <div id="scene-stage" class="scene-stage">
             <canvas
               id="optics-canvas"
               tabindex="0"
-              aria-label="虹とハロを観察する3Dシミュレーション。矢印キーで視点を回転できます。"
+              aria-label="虹とハロを観察する3Dシミュレーション。矢印キーで回転、プラスとマイナスで連続ズーム、Homeで全景、Endで光路へ移動できます。"
               aria-describedby="semantic-note"
             ></canvas>
             <div class="canvas-overlay canvas-overlay-top">
@@ -147,7 +185,7 @@
             </div>
             <div class="canvas-overlay canvas-overlay-bottom">
               <span class="drag-hint">↔ ドラッグして裏側まで確認</span>
-              <span id="camera-readout">方位 0° / 仰角 16° / 距離 29</span>
+              <span id="camera-readout">方位 37° / 仰角 17° / 意味ズーム 0%</span>
             </div>
             <div id="webgl-fallback" class="fallback" hidden>
               <h3>3D表示を開始できませんでした</h3>
@@ -155,7 +193,7 @@
             </div>
           </div>
           <p id="semantic-note" class="semantic-note">
-            kmからmmまでを見失わず学ぶための「意味的ズーム」です。表示模型は段階ごとに正規化し、角度と屈折率は同じ物理計算を使います。
+            約300 m相当から水滴内部までを見失わず学ぶ対数的な「意味ズーム」です。同じ代表水滴を追跡しながら局所模型へ連続に再正規化します。数値はカメラ画角や画面寸法から校正した実測縮尺ではありません。
           </p>
         </section>
 
@@ -212,6 +250,7 @@
         <p>
           出典・基礎：<a href="https://glossary.ametsoc.org/wiki/rainbow/" rel="noreferrer">AMS Glossary: rainbow</a> ／
           <a href="https://iapws.org/documents/release/Rindex.download" rel="noreferrer">IAPWS R9-97 水の屈折率</a> ／
+          <a href="https://www.sciencedirect.com/science/article/abs/pii/S037015730100076X" rel="noreferrer">Adam: The mathematical physics of rainbows and glories</a> ／
           <a href="https://cloudatlas.wmo.int/en/halo-phenomena.html" rel="noreferrer">WMO Cloud Atlas: halo</a>
         </p>
         <p>教育用β。安全・防災上の判断には使用せず、太陽を直接見ないでください。</p>
