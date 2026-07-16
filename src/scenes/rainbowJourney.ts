@@ -110,6 +110,10 @@ export class RainbowJourney {
     this.group.visible = visible;
   }
 
+  setObserverView(observerView: boolean): void {
+    this.overview.setObserverView(observerView);
+  }
+
   applyZoom(frame: RainbowZoomFrame): void {
     this.frame = frame;
     this.overview.setJourneyOpacity(frame.overviewOpacity);
@@ -170,7 +174,8 @@ export class RainbowJourney {
     viewportWidth: number,
     viewportHeight: number,
     maximumDistancePx: number,
-    candidateOffset = 0
+    candidateOffset = 0,
+    preferContributors = false
   ): FocusDropletSnapshot | null {
     const selected = this.overview.pickDroplet(
       camera,
@@ -179,7 +184,8 @@ export class RainbowJourney {
       viewportWidth,
       viewportHeight,
       maximumDistancePx,
-      candidateOffset
+      candidateOffset,
+      preferContributors
     );
     return selected ? this.acceptSelection(selected) : null;
   }

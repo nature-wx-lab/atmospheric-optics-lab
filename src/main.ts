@@ -24,16 +24,27 @@ import {
   RAINBOW_CHAPTER_LABELS,
   cameraDistanceFromProgress,
   formatSemanticSpan,
-  progressFromCameraDistance,
   rainbowZoomFrame,
+  smoothstep,
   type RainbowZoomChapter,
   type RainbowZoomFrame
 } from "./physics/semanticZoom";
+import {
+  defaultObserverLookDirection,
+  observerRainbowVerticalFovDeg
+} from "./physics/rainbowView";
 import { ChaseExperiment } from "./scenes/chaseExperiment";
 import { HaloOverview } from "./scenes/haloOverview";
 import { RainbowJourney, type FocusDropletSnapshot } from "./scenes/rainbowJourney";
 
 type ViewName = "overview" | "chase" | "droplet" | "halo";
+type RainbowPerspective = "eye" | "structure";
+
+interface RainbowCameraPose {
+  readonly position: THREE.Vector3;
+  readonly target: THREE.Vector3;
+  readonly fov: number;
+}
 
 interface AppState {
   view: ViewName;
@@ -108,11 +119,19 @@ function setModelItems(items: readonly [string, string, string, string]): void {
   items.forEach((item, index) => setText(`#model-${index + 1}`, item));
 }
 
-function rainbowVisibilityNote(order: RainbowOrder, sunElevation: number): string {
+function rainbowVisibilityNote(
+  order: RainbowOrder,
+  sunElevation: number,
+  perspective: RainbowPerspective
+): string {
   const range = rainbowAngleRange(order);
+  const guideNote =
+    perspective === "eye"
+      ? "「外から360°」へ切り替えると、地平線下を含む計算円錐も確認できます。"
+      : "中性破線は、地平線下を含む計算角ガイドです。";
   return sunElevation >= range.maximumDeg
-    ? `太陽高度${sunElevation}°では、この次数の円錐は空側に出ません。中性破線の計算角ガイドだけは地平線下を含む全円錐を示します。`
-    : `太陽高度${sunElevation}°では円錐の一部が地平線より上に出ます。中性破線は地平線下を含む計算角ガイドです。`;
+    ? `太陽高度${sunElevation}°では、この次数の円錐は空側に出ません。${guideNote}`
+    : `太陽高度${sunElevation}°では円錐の一部が地平線より上に出ます。${guideNote}`;
 }
 
 const state: AppState = {
@@ -196,29 +215,41 @@ const RAINBOW_OVERVIEW_TARGET = new THREE.Vector3(
   OBSERVER_OPTICAL_ORIGIN.y,
   OBSERVER_OPTICAL_ORIGIN.z
 );
-const DEFAULT_RAINBOW_DIRECTION = new THREE.Vector3(18, 9.4, 24).normalize();
+const DEFAULT_STRUCTURE_DIRECTION = new THREE.Vector3(18, 9.4, 24).normalize();
+const EYE_GAZE_DISTANCE = 1;
+const DEFAULT_CAMERA_FOV = 46;
+const DETAIL_ORBIT_START = 0.7;
+const EYE_LOOK_END = 0.08;
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let applyingSemanticZoom = false;
 let rainbowAnimationFrame = 0;
 let lastRainbowChapter: RainbowZoomChapter | null = null;
+let rainbowPerspective: RainbowPerspective = "eye";
+let eyeViewTracksSun = true;
+let structureDirection = DEFAULT_STRUCTURE_DIRECTION.clone();
+let detailOrbitDirection: THREE.Vector3 | null = null;
+let eyeLookDirection = new THREE.Vector3();
+
+function observerOrigin(): THREE.Vector3 {
+  return RAINBOW_OVERVIEW_TARGET.clone();
+}
+
+function resetEyeLookDirection(): void {
+  const direction = defaultObserverLookDirection(state.sunElevation, state.sunAzimuth);
+  eyeLookDirection.set(direction.x, direction.y, direction.z).normalize();
+}
+
+resetEyeLookDirection();
 
 function isRainbowView(view: ViewName): boolean {
   return view === "overview" || view === "droplet";
 }
 
-function cameraDistance(): number {
-  return camera.position.distanceTo(controls.target);
-}
-
 function setCameraDistance(multiplier: number): void {
   if (isRainbowView(state.view)) {
     cancelRainbowAnimation();
-    const distance = THREE.MathUtils.clamp(
-      cameraDistance() * multiplier,
-      RAINBOW_CAMERA_NEAR,
-      RAINBOW_CAMERA_FAR
-    );
-    applyRainbowProgress(progressFromCameraDistance(distance));
+    const delta = multiplier < 1 ? 0.075 : -0.075;
+    applyRainbowProgress(state.rainbowZoom + delta);
     announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
     return;
   }
@@ -276,9 +307,10 @@ function updateRainbowProgressUi(frame: RainbowZoomFrame): void {
   updateSelectedDropUi(focus);
   setText(
     "#view-state",
-    `${RAINBOW_CHAPTER_LABELS[frame.chapter]} / 雨滴場の実在ID ${focus.id}`
+    `${rainbowPerspective === "eye" ? "目から見る" : "外から360°"} / ${RAINBOW_CHAPTER_LABELS[frame.chapter]} / 実在ID ${focus.id}`
   );
   setText("#focus-particle", frame.progress < 0.72 ? "この水滴へ" : "虹の全景へ");
+  updateRainbowDragHint(frame);
 
   if (frame.chapter !== lastRainbowChapter) {
     lastRainbowChapter = frame.chapter;
@@ -291,29 +323,114 @@ function updateRainbowProgressUi(frame: RainbowZoomFrame): void {
   updateCameraReadout();
 }
 
-function applyRainbowProgress(progress: number, fromControls = false): void {
-  const frame = rainbowZoomFrame(progress);
-  const offset = camera.position.clone().sub(controls.target);
-  const direction = offset.lengthSq() > 1e-12
-    ? offset.normalize()
-    : DEFAULT_RAINBOW_DIRECTION.clone();
-  const distance = fromControls
-    ? THREE.MathUtils.clamp(cameraDistance(), RAINBOW_CAMERA_NEAR, RAINBOW_CAMERA_FAR)
-    : cameraDistanceFromProgress(frame.progress);
-  const target = RAINBOW_OVERVIEW_TARGET.clone().lerp(
-    rainbowJourney.getFocusPosition(),
-    frame.targetBlend
+function slerpDirection(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  progress: number
+): THREE.Vector3 {
+  const forward = new THREE.Vector3(0, 0, -1);
+  const startQuaternion = new THREE.Quaternion().setFromUnitVectors(
+    forward,
+    start.clone().normalize()
   );
+  const endQuaternion = new THREE.Quaternion().setFromUnitVectors(
+    forward,
+    end.clone().normalize()
+  );
+  startQuaternion.slerp(endQuaternion, THREE.MathUtils.clamp(progress, 0, 1));
+  return forward.applyQuaternion(startQuaternion).normalize();
+}
 
-  state.rainbowZoom = frame.progress;
-  rainbowJourney.applyZoom(frame);
-  applyingSemanticZoom = true;
-  controls.minDistance = RAINBOW_CAMERA_NEAR;
+function computedDetailOrbitDirection(): THREE.Vector3 {
+  const focus = rainbowJourney.getFocusSnapshot();
+  const normal = new THREE.Vector3().crossVectors(
+    focus.incomingDirection,
+    focus.outgoingDirection
+  );
+  if (normal.lengthSq() < 1e-10) return DEFAULT_STRUCTURE_DIRECTION.clone();
+  normal.normalize();
+  if (normal.y < 0) normal.negate();
+  return normal.addScaledVector(new THREE.Vector3(0, 1, 0), 0.18).normalize();
+}
+
+function rainbowCameraPose(frame: RainbowZoomFrame): RainbowCameraPose {
+  const focus = rainbowJourney.getFocusSnapshot();
+  if (rainbowPerspective === "structure") {
+    const target = observerOrigin().lerp(focus.position, frame.targetBlend);
+    return {
+      position: target
+        .clone()
+        .addScaledVector(structureDirection, cameraDistanceFromProgress(frame.progress)),
+      target,
+      fov: DEFAULT_CAMERA_FOV
+    };
+  }
+
+  const origin = observerOrigin();
+  const endDirection = detailOrbitDirection ?? computedDetailOrbitDirection();
+  const endPosition = focus.position
+    .clone()
+    .addScaledVector(endDirection, RAINBOW_CAMERA_NEAR);
+  const endForward = focus.position.clone().sub(endPosition).normalize();
+  const turnProgress = smoothstep(0.04, 0.72, frame.progress);
+  const travelProgress = smoothstep(0.14, 0.72, frame.progress);
+  const position = origin.clone().lerp(endPosition, travelProgress);
+  const forward = slerpDirection(eyeLookDirection, endForward, turnProgress);
+  const gazeDistance = THREE.MathUtils.lerp(
+    EYE_GAZE_DISTANCE,
+    RAINBOW_CAMERA_NEAR,
+    travelProgress
+  );
+  const observerFov = observerRainbowVerticalFovDeg(
+    state.order,
+    state.sunElevation,
+    camera.aspect
+  );
+  return {
+    position,
+    target: position.clone().addScaledVector(forward, gazeDistance),
+    fov: THREE.MathUtils.lerp(
+      observerFov,
+      DEFAULT_CAMERA_FOV,
+      smoothstep(0.4, 0.74, frame.progress)
+    )
+  };
+}
+
+function configureRainbowControls(frame: RainbowZoomFrame): void {
+  controls.enableZoom = false;
+  controls.enablePan = false;
+  controls.enableRotate =
+    rainbowPerspective === "structure" ||
+    frame.progress <= EYE_LOOK_END ||
+    frame.progress >= DETAIL_ORBIT_START;
+  controls.minDistance = rainbowPerspective === "structure"
+    ? RAINBOW_CAMERA_NEAR
+    : 0.45;
   controls.maxDistance = RAINBOW_CAMERA_FAR;
-  controls.target.copy(target);
-  camera.position.copy(target).addScaledVector(direction, distance);
-  controls.update();
-  applyingSemanticZoom = false;
+}
+
+function applyRainbowCameraPose(frame: RainbowZoomFrame): void {
+  const pose = rainbowCameraPose(frame);
+  applyingSemanticZoom = true;
+  try {
+    controls.target.copy(pose.target);
+    camera.position.copy(pose.position);
+    camera.fov = pose.fov;
+    camera.updateProjectionMatrix();
+    configureRainbowControls(frame);
+    controls.update();
+  } finally {
+    applyingSemanticZoom = false;
+  }
+}
+
+function applyRainbowProgress(progress: number): void {
+  const frame = rainbowZoomFrame(progress);
+  state.rainbowZoom = frame.progress;
+  rainbowJourney.setObserverView(rainbowPerspective === "eye");
+  rainbowJourney.applyZoom(frame);
+  applyRainbowCameraPose(frame);
   updateRainbowProgressUi(frame);
   requestRender();
 }
@@ -351,18 +468,15 @@ function animateRainbowProgress(targetProgress: number): void {
 
 function resetCamera(): void {
   if (isRainbowView(state.view)) {
-    const frame = rainbowZoomFrame(state.rainbowZoom);
-    const target = RAINBOW_OVERVIEW_TARGET.clone().lerp(
-      rainbowJourney.getFocusPosition(),
-      frame.targetBlend
-    );
-    controls.target.copy(target);
-    camera.position.copy(target).addScaledVector(
-      DEFAULT_RAINBOW_DIRECTION,
-      cameraDistanceFromProgress(frame.progress)
-    );
-    controls.minDistance = RAINBOW_CAMERA_NEAR;
-    controls.maxDistance = RAINBOW_CAMERA_FAR;
+    rainbowPerspective = "eye";
+    eyeViewTracksSun = true;
+    resetEyeLookDirection();
+    structureDirection.copy(DEFAULT_STRUCTURE_DIRECTION);
+    detailOrbitDirection = null;
+    rainbowJourney.setObserverView(true);
+    updateRainbowPerspectiveUi();
+    animateRainbowProgress(0);
+    return;
   } else if (state.view === "chase") {
     camera.position.set(12, 8, 17);
     controls.target.set(0, 2.2, 0);
@@ -374,6 +488,11 @@ function resetCamera(): void {
     controls.minDistance = 5;
     controls.maxDistance = 62;
   }
+  camera.fov = DEFAULT_CAMERA_FOV;
+  camera.updateProjectionMatrix();
+  controls.enableRotate = true;
+  controls.enableZoom = true;
+  controls.enablePan = false;
   controls.update();
   updateCameraReadout();
 }
@@ -407,31 +526,19 @@ function acceptRainDropSelection(
 ): void {
   cancelRainbowAnimation();
   const frame = rainbowZoomFrame(state.rainbowZoom);
+  detailOrbitDirection = null;
+  rainbowJourney.setObserverView(rainbowPerspective === "eye");
   rainbowJourney.applyZoom(frame);
   updateRainbowProgressUi(frame);
   updateRainbowExplanation();
   const status = `${selectionAnnouncement(snapshot)}${extraStatus ? ` ${extraStatus}` : ""}`;
-  const endTarget = RAINBOW_OVERVIEW_TARGET.clone().lerp(
-    rainbowJourney.getFocusPosition(),
-    frame.targetBlend
-  );
-  const startDistance = startCameraPosition.distanceTo(startTarget);
-  const startOffset = startCameraPosition.clone().sub(startTarget);
-  if (startOffset.lengthSq() < 1e-12) startOffset.copy(DEFAULT_RAINBOW_DIRECTION);
-  const endCameraPosition = endTarget.clone().addScaledVector(
-    startOffset.normalize(),
-    THREE.MathUtils.clamp(startDistance, RAINBOW_CAMERA_NEAR, RAINBOW_CAMERA_FAR)
-  );
-  const travel = startTarget.distanceTo(endTarget);
-  if (travel < 1e-4 || frame.targetBlend < 0.02 || prefersReducedMotion.matches) {
-    applyingSemanticZoom = true;
-    try {
-      controls.target.copy(endTarget);
-      camera.position.copy(endCameraPosition);
-      controls.update();
-    } finally {
-      applyingSemanticZoom = false;
-    }
+  const endPose = rainbowCameraPose(frame);
+  const startFov = camera.fov;
+  const travel =
+    startCameraPosition.distanceTo(endPose.position) +
+    startTarget.distanceTo(endPose.target);
+  if (travel < 1e-4 || frame.progress < 0.1 || prefersReducedMotion.matches) {
+    applyRainbowCameraPose(frame);
     updateCameraReadout();
     setText("#zoom-status", status);
     requestRender();
@@ -439,14 +546,17 @@ function acceptRainDropSelection(
   }
 
   const startedAt = performance.now();
-  const duration = THREE.MathUtils.clamp(360 + travel * 42, 420, 900);
+  const duration = THREE.MathUtils.clamp(360 + travel * 28, 420, 900);
   const step = (now: number): void => {
     const unit = THREE.MathUtils.clamp((now - startedAt) / duration, 0, 1);
     const eased = unit * unit * (3 - 2 * unit);
     applyingSemanticZoom = true;
     try {
-      controls.target.lerpVectors(startTarget, endTarget, eased);
-      camera.position.lerpVectors(startCameraPosition, endCameraPosition, eased);
+      controls.target.lerpVectors(startTarget, endPose.target, eased);
+      camera.position.lerpVectors(startCameraPosition, endPose.position, eased);
+      camera.fov = THREE.MathUtils.lerp(startFov, endPose.fov, eased);
+      camera.updateProjectionMatrix();
+      configureRainbowControls(frame);
       controls.update();
     } finally {
       applyingSemanticZoom = false;
@@ -503,9 +613,11 @@ function renderControlVisibility(): void {
   setHidden("#mobile-drop-dock", !isRainbow);
   setHidden("#mobile-drop-id-dock", !isRainbow);
   setHidden("#selected-drop-readout", !isRainbow);
+  setHidden("#rainbow-perspective-switch", !isRainbow);
 
   if (isHalo) setText("#focus-particle", "氷晶へ寄る");
   else if (!isRainbowView(state.view)) setText("#focus-particle", "水滴・光路へ");
+  setText("#reset-view", isRainbow ? "虹が見える視点" : "視点を戻す");
   const zoomInLabel = isRainbow ? "水滴の光路側へ拡大" : "模型を拡大";
   const zoomOutLabel = isRainbow ? "虹の全景側へ縮小" : "模型を縮小";
   for (const selector of ["#zoom-in", "#mobile-zoom-in"]) {
@@ -522,6 +634,34 @@ function renderControlVisibility(): void {
     requireElement<HTMLOutputElement>("#semantic-zoom-value").value = "—";
     requireElement<HTMLOutputElement>("#mobile-semantic-zoom-value").value = "—";
   }
+  updateRainbowPerspectiveUi();
+}
+
+function updateRainbowPerspectiveUi(): void {
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-rainbow-perspective]")
+    .forEach((button) => {
+      const active = button.dataset.rainbowPerspective === rainbowPerspective;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  updateRainbowDragHint();
+}
+
+function updateRainbowDragHint(
+  frame: RainbowZoomFrame = rainbowZoomFrame(state.rainbowZoom)
+): void {
+  if (!isRainbowView(state.view)) {
+    setText("#drag-hint", "↔ ドラッグで360°回転");
+  } else if (rainbowPerspective === "structure") {
+    setText("#drag-hint", "↔ ドラッグで外側から360°");
+  } else if (frame.progress <= EYE_LOOK_END) {
+    setText("#drag-hint", "↔ ドラッグで視線を360°");
+  } else if (frame.progress < DETAIL_ORBIT_START) {
+    setText("#drag-hint", "↕ ホイール・ピンチで同じ水滴へ接近");
+  } else {
+    setText("#drag-hint", "↔ ドラッグで水滴模型を360°");
+  }
 }
 
 function setView(view: ViewName): void {
@@ -532,14 +672,16 @@ function setView(view: ViewName): void {
     halo.setVisible(false);
     if (!wasRainbow) {
       state.view = view;
+      rainbowPerspective = "eye";
+      eyeViewTracksSun = true;
+      resetEyeLookDirection();
+      detailOrbitDirection = null;
+      structureDirection.copy(DEFAULT_STRUCTURE_DIRECTION);
       syncCurrentScene();
       lastRainbowChapter = null;
       const targetProgress = view === "overview" ? 0 : 0.86;
-      controls.target.copy(RAINBOW_OVERVIEW_TARGET);
-      camera.position.copy(RAINBOW_OVERVIEW_TARGET).addScaledVector(
-        DEFAULT_RAINBOW_DIRECTION,
-        cameraDistanceFromProgress(targetProgress)
-      );
+      rainbowJourney.setObserverView(true);
+      updateRainbowPerspectiveUi();
       applyRainbowProgress(targetProgress);
     } else {
       animateRainbowProgress(view === "overview" ? 0 : 0.86);
@@ -587,7 +729,7 @@ function updateRainbowExplanation(
   setText(
     "#angle-context",
     isFar
-      ? rainbowVisibilityNote(state.order, state.sunElevation)
+      ? rainbowVisibilityNote(state.order, state.sunElevation, rainbowPerspective)
       : focus.contributes
         ? `${selectedWavelengthLabel}の停留角 ${focus.rainbowRadiusDeg.toFixed(3)}°と一致。入射角 ${ray.incidenceDeg.toFixed(2)}° → 水中 ${ray.refractionDeg.toFixed(2)}°です。`
         : `この滴は虹帯 ${range.minimumDeg.toFixed(1)}°–${range.maximumDeg.toFixed(1)}°の外です。表示する比較光線は観察者の目を外れます。`
@@ -615,7 +757,7 @@ function updateRainbowExplanation(
       setText("#explanation-title", "1滴は1つの輝点。多数の滴が連なって弧になる");
       setText(
         "#explanation-body",
-        "灰色も色付きも同じ固定雨滴配列です。観察者を頂点とする波長別の円錐帯へ入った滴だけを色付けしています。60,000滴は大量雨滴の代表標本で、実際の虹は桁違いに多い雨滴の散乱光が視線方向に積み重なります。"
+        "灰色も色付きも同じ固定雨滴配列です。既定の「目から見る」では、観察者を頂点とする波長別の円錐帯へ入った実在IDだけが同じ見かけの方向に重なり、弧になります。光点の大きさは視認用で、絶対輝度ではありません。"
       );
       break;
     case "contributor":
@@ -716,7 +858,7 @@ function updateRainbowExplanation(
     `固定seedの${formatCount(focus.totalDroplets)}滴から選んだ同じIDを、水滴内部まで追う対数的な意味ズームです。標本数・配置距離・画面スケールは実際の降水量や虹までの固有距離を表しません。`
   );
   setModelItems([
-    "固定した60,000滴の代表標本に永続IDを付け、位置とは独立に観察者・太陽・波長の角度条件を再計算します。1点は実際の1滴総数を意味しません。",
+    "固定した60,000滴の代表標本に永続IDを付け、観察者・太陽・波長の角度条件を再計算します。目から見る光点と外側3Dの点は同じID・同じ世界位置です。",
     "直径0.45–1.00 mmの等価球水滴・幾何光学・空気の屈折率を1とする近似です。大粒雨滴の扁平化は未実装です。",
     "寄与滴では、視線角に一致する停留角の屈折率を代表波長間で数値的に解きます。非寄与滴の比較光線は目へ接続しません。",
     "過剰虹・干渉・回折・太陽視直径によるぼけ・絶対輝度にはAiry／Lorenz–Mie等の波動光学が必要で、未計算です。"
@@ -865,9 +1007,19 @@ function updateExplanation(): void {
 }
 
 function updateCurrentConditions(): void {
+  if (isRainbowView(state.view)) cancelRainbowAnimation();
   const previousFocus = isRainbowView(state.view)
     ? rainbowJourney.getFocusSnapshot()
     : null;
+  if (
+    isRainbowView(state.view) &&
+    rainbowPerspective === "eye" &&
+    eyeViewTracksSun &&
+    state.rainbowZoom <= EYE_LOOK_END
+  ) {
+    resetEyeLookDirection();
+  }
+  if (isRainbowView(state.view)) detailOrbitDirection = null;
   syncCurrentScene();
   if (isRainbowView(state.view)) {
     applyRainbowProgress(state.rainbowZoom);
@@ -919,19 +1071,52 @@ function scheduleConditionUpdate(): void {
 }
 
 function updateCameraReadout(): void {
-  const offset = camera.position.clone().sub(controls.target);
-  const spherical = new THREE.Spherical().setFromVector3(offset);
+  const vector =
+    isRainbowView(state.view) && rainbowPerspective === "eye"
+      ? controls.target.clone().sub(camera.position)
+      : camera.position.clone().sub(controls.target);
+  const spherical = new THREE.Spherical().setFromVector3(vector);
   const azimuth = normalizedDegrees(THREE.MathUtils.radToDeg(spherical.theta));
   const elevation = 90 - THREE.MathUtils.radToDeg(spherical.phi);
   setText(
     "#camera-readout",
     isRainbowView(state.view)
-      ? `方位 ${azimuth.toFixed(0)}° / 仰角 ${elevation.toFixed(0)}° / 意味ズーム ${Math.round(state.rainbowZoom * 100)}%`
+      ? `${rainbowPerspective === "eye" ? "目から見る" : "外から360°"} / 方位 ${azimuth.toFixed(0)}° / 仰角 ${elevation.toFixed(0)}° / ${Math.round(state.rainbowZoom * 100)}%`
       : `方位 ${azimuth.toFixed(0)}° / 仰角 ${elevation.toFixed(0)}° / 模型距離 ${spherical.radius.toFixed(1)}`
   );
 }
 
 function rotateCamera(deltaAzimuth: number, deltaPolar: number): void {
+  if (
+    isRainbowView(state.view) &&
+    rainbowPerspective === "eye" &&
+    state.rainbowZoom <= EYE_LOOK_END
+  ) {
+    const spherical = new THREE.Spherical().setFromVector3(eyeLookDirection);
+    spherical.theta += deltaAzimuth;
+    spherical.phi = THREE.MathUtils.clamp(
+      spherical.phi + deltaPolar,
+      controls.minPolarAngle,
+      controls.maxPolarAngle
+    );
+    eyeLookDirection.setFromSpherical(spherical).normalize();
+    eyeViewTracksSun = false;
+    applyRainbowCameraPose(rainbowZoomFrame(state.rainbowZoom));
+    updateCameraReadout();
+    requestRender();
+    return;
+  }
+  if (
+    isRainbowView(state.view) &&
+    rainbowPerspective === "eye" &&
+    state.rainbowZoom < DETAIL_ORBIT_START
+  ) {
+    setText(
+      "#zoom-status",
+      "接近中はホイール・ピンチ・ズーム操作で同じ水滴を追います。70%以降は再び回転できます。"
+    );
+    return;
+  }
   const spherical = new THREE.Spherical().setFromVector3(
     camera.position.clone().sub(controls.target)
   );
@@ -946,6 +1131,72 @@ function rotateCamera(deltaAzimuth: number, deltaPolar: number): void {
   updateCameraReadout();
 }
 
+function setRainbowPerspective(nextPerspective: RainbowPerspective): void {
+  if (!isRainbowView(state.view)) setView("overview");
+  if (nextPerspective === rainbowPerspective) {
+    if (nextPerspective === "eye") {
+      eyeViewTracksSun = true;
+      resetEyeLookDirection();
+      applyRainbowCameraPose(rainbowZoomFrame(state.rainbowZoom));
+      requestRender();
+    }
+    return;
+  }
+
+  cancelRainbowAnimation();
+  const startPosition = camera.position.clone();
+  const startTarget = controls.target.clone();
+  const startFov = camera.fov;
+  rainbowPerspective = nextPerspective;
+  if (nextPerspective === "eye") {
+    eyeViewTracksSun = true;
+    resetEyeLookDirection();
+  }
+  rainbowJourney.setObserverView(nextPerspective === "eye");
+  updateRainbowPerspectiveUi();
+  const frame = rainbowZoomFrame(state.rainbowZoom);
+  const endPose = rainbowCameraPose(frame);
+  if (prefersReducedMotion.matches) {
+    applyRainbowCameraPose(frame);
+    updateRainbowProgressUi(frame);
+    requestRender();
+    return;
+  }
+
+  const startedAt = performance.now();
+  const duration = 460;
+  const step = (now: number): void => {
+    const unit = THREE.MathUtils.clamp((now - startedAt) / duration, 0, 1);
+    const eased = unit * unit * (3 - 2 * unit);
+    applyingSemanticZoom = true;
+    try {
+      camera.position.lerpVectors(startPosition, endPose.position, eased);
+      controls.target.lerpVectors(startTarget, endPose.target, eased);
+      camera.fov = THREE.MathUtils.lerp(startFov, endPose.fov, eased);
+      camera.updateProjectionMatrix();
+      configureRainbowControls(frame);
+      controls.update();
+    } finally {
+      applyingSemanticZoom = false;
+    }
+    updateCameraReadout();
+    requestRender();
+    if (unit < 1) {
+      rainbowAnimationFrame = requestAnimationFrame(step);
+    } else {
+      rainbowAnimationFrame = 0;
+      updateRainbowProgressUi(frame);
+      setText(
+        "#zoom-status",
+        nextPerspective === "eye"
+          ? "観察者の目の位置へ移動しました。虹の弧は、同じ寄与雨滴を目から見た方向です。"
+          : "外側の3D構造表示へ移動しました。色点は同じ寄与雨滴IDのままです。"
+      );
+    }
+  };
+  rainbowAnimationFrame = requestAnimationFrame(step);
+}
+
 document.querySelectorAll<HTMLButtonElement>(".mode-tab[data-view]").forEach((button) => {
   button.addEventListener("click", () => {
     const view = button.dataset.view;
@@ -954,6 +1205,17 @@ document.querySelectorAll<HTMLButtonElement>(".mode-tab[data-view]").forEach((bu
     }
   });
 });
+
+document
+  .querySelectorAll<HTMLButtonElement>("[data-rainbow-perspective]")
+  .forEach((button) => {
+    button.addEventListener("click", () => {
+      const perspective = button.dataset.rainbowPerspective;
+      if (perspective === "eye" || perspective === "structure") {
+        setRainbowPerspective(perspective);
+      }
+    });
+  });
 
 document.querySelectorAll<HTMLButtonElement>(".segment-button[data-order]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -1119,7 +1381,32 @@ requireElement<HTMLButtonElement>("#mobile-zoom-out").addEventListener("click", 
 controls.addEventListener("change", () => {
   if (isRainbowView(state.view) && !applyingSemanticZoom) {
     cancelRainbowAnimation();
-    applyRainbowProgress(progressFromCameraDistance(cameraDistance()), true);
+    if (
+      rainbowPerspective === "eye" &&
+      state.rainbowZoom <= EYE_LOOK_END
+    ) {
+      const nextDirection = controls.target.clone().sub(camera.position);
+      if (nextDirection.lengthSq() > 1e-10) {
+        eyeLookDirection.copy(nextDirection.normalize());
+        eyeViewTracksSun = false;
+        applyRainbowCameraPose(rainbowZoomFrame(state.rainbowZoom));
+      }
+    } else if (
+      rainbowPerspective === "eye" &&
+      state.rainbowZoom >= DETAIL_ORBIT_START
+    ) {
+      const nextDirection = camera.position.clone().sub(controls.target);
+      if (nextDirection.lengthSq() > 1e-10) {
+        detailOrbitDirection = nextDirection.normalize();
+      }
+    } else if (rainbowPerspective === "structure") {
+      const nextDirection = camera.position.clone().sub(controls.target);
+      if (nextDirection.lengthSq() > 1e-10) {
+        structureDirection.copy(nextDirection.normalize());
+      }
+    }
+    updateCameraReadout();
+    requestRender();
     return;
   }
   updateCameraReadout();
@@ -1134,13 +1421,92 @@ canvas.addEventListener(
       return;
     }
     if (!isRainbowView(state.view)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
     cancelRainbowAnimation();
-    const atNearEdge = cameraDistance() <= RAINBOW_CAMERA_NEAR + 0.01 && event.deltaY < 0;
-    const atFarEdge = cameraDistance() >= RAINBOW_CAMERA_FAR - 0.01 && event.deltaY > 0;
-    if (atNearEdge || atFarEdge) event.stopImmediatePropagation();
+    const pixelDelta =
+      event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? event.deltaY * 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? event.deltaY * Math.max(1, stage.clientHeight)
+          : event.deltaY;
+    const delta = THREE.MathUtils.clamp(pixelDelta * 0.00065, -0.12, 0.12);
+    applyRainbowProgress(state.rainbowZoom - delta);
+  },
+  { capture: true, passive: false }
+);
+
+const rainbowTouchPointers = new Map<number, { x: number; y: number }>();
+let rainbowPinchStartDistance = 0;
+let rainbowPinchStartProgress = 0;
+let pinchingRainbow = false;
+
+function currentRainbowPinchDistance(): number {
+  const points = [...rainbowTouchPointers.values()];
+  const first = points[0];
+  const second = points[1];
+  if (!first || !second) return 0;
+  return Math.hypot(second.x - first.x, second.y - first.y);
+}
+
+function endRainbowPinch(pointerId: number): void {
+  rainbowTouchPointers.delete(pointerId);
+  if (pinchingRainbow && rainbowTouchPointers.size < 2) {
+    pinchingRainbow = false;
+    rainbowPinchStartDistance = 0;
+  }
+  if (rainbowTouchPointers.size === 0) {
+    controls.enabled = true;
+  }
+  if (rainbowTouchPointers.size === 0 && isRainbowView(state.view)) {
+    configureRainbowControls(rainbowZoomFrame(state.rainbowZoom));
+  }
+}
+
+canvas.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (event.pointerType !== "touch" || !isRainbowView(state.view)) return;
+    rainbowTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (rainbowTouchPointers.size !== 2) return;
+    rainbowPinchStartDistance = currentRainbowPinchDistance();
+    rainbowPinchStartProgress = state.rainbowZoom;
+    pinchingRainbow = rainbowPinchStartDistance > 0;
+    if (pinchingRainbow) {
+      controls.enabled = false;
+      selectionPointerStart = null;
+    }
   },
   { capture: true, passive: true }
 );
+
+canvas.addEventListener(
+  "pointermove",
+  (event) => {
+    if (event.pointerType !== "touch" || !rainbowTouchPointers.has(event.pointerId)) return;
+    rainbowTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (!pinchingRainbow || rainbowPinchStartDistance <= 0) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const currentDistance = currentRainbowPinchDistance();
+    if (currentDistance <= 0) return;
+    cancelRainbowAnimation();
+    applyRainbowProgress(
+      rainbowPinchStartProgress +
+        Math.log(currentDistance / rainbowPinchStartDistance) * 0.48
+    );
+  },
+  { capture: true, passive: false }
+);
+
+canvas.addEventListener("pointerup", (event) => endRainbowPinch(event.pointerId), {
+  capture: true,
+  passive: true
+});
+canvas.addEventListener("pointercancel", (event) => endRainbowPinch(event.pointerId), {
+  capture: true,
+  passive: true
+});
 
 let selectionPointerStart: {
   readonly pointerId: number;
@@ -1198,7 +1564,8 @@ function pickRainDropAt(
     rect.width,
     rect.height,
     pointerType === "touch" ? 24 : 15,
-    candidateOffset
+    candidateOffset,
+    rainbowPerspective === "eye" && state.rainbowZoom <= 0.22
   );
   const candidateCount = rainbowJourney.getLastPickCandidateCount();
   if (!snapshot) {
@@ -1298,6 +1665,9 @@ const resizeObserver = new ResizeObserver(() => {
     renderedHeight = height;
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
+    if (isRainbowView(state.view)) {
+      camera.fov = rainbowCameraPose(rainbowZoomFrame(state.rainbowZoom)).fov;
+    }
     camera.updateProjectionMatrix();
     requestRender();
   });

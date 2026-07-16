@@ -18,6 +18,29 @@ import { OBSERVER_OPTICAL_ORIGIN } from "../physics/semanticZoom";
 const SKY_RADIUS = 14.5;
 const METERS_TO_SCENE_UNITS = 0.046;
 
+function createSoftPointTexture(size = 32): THREE.DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  const center = (size - 1) / 2;
+  const radius = size / 2;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const distance = Math.hypot(x - center, y - center) / radius;
+      const alpha = distance >= 1
+        ? 0
+        : Math.round(255 * Math.pow(1 - distance * distance, 2.4));
+      const offset = (y * size + x) * 4;
+      data[offset] = 255;
+      data[offset + 1] = 255;
+      data[offset + 2] = 255;
+      data[offset + 3] = alpha;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function opticalOrigin(): THREE.Vector3 {
   return new THREE.Vector3(
     OBSERVER_OPTICAL_ORIGIN.x,
@@ -101,9 +124,13 @@ export class RainbowOverview {
   private readonly contributorMask: Uint8Array;
   private readonly contributorObservations = new Map<number, RainDropletObservation>();
   private readonly rainGeometry = new THREE.BufferGeometry();
+  private readonly softPointTexture = createSoftPointTexture();
   private readonly baseOpacities = new WeakMap<THREE.Material, number>();
   private readonly baseTransparency = new WeakMap<THREE.Material, boolean>();
   private readonly baseDepthWrite = new WeakMap<THREE.Material, boolean>();
+  private rainMaterial: THREE.PointsMaterial | null = null;
+  private contributorCoreMaterial: THREE.PointsMaterial | null = null;
+  private contributorGlowMaterial: THREE.PointsMaterial | null = null;
   private contributorIndices: readonly number[] = [];
   private selectedIndex = -1;
   private visibleCount = 0;
@@ -112,6 +139,7 @@ export class RainbowOverview {
   private sunAzimuth = 225;
   private density = 0.7;
   private journeyOpacity = 1;
+  private observerView = true;
   private lastPickCandidateCount = 0;
 
   constructor() {
@@ -152,6 +180,11 @@ export class RainbowOverview {
 
   setVisible(visible: boolean): void {
     this.group.visible = visible;
+  }
+
+  setObserverView(observerView: boolean): void {
+    this.observerView = observerView;
+    this.applyViewPresentation();
   }
 
   setJourneyOpacity(opacity: number): void {
@@ -220,7 +253,8 @@ export class RainbowOverview {
     viewportWidth: number,
     viewportHeight: number,
     maximumDistancePx: number,
-    candidateOffset = 0
+    candidateOffset = 0,
+    preferContributors = false
   ): RainbowOverviewSelection | null {
     if (!(viewportWidth > 0) || !(viewportHeight > 0) || !(maximumDistancePx > 0)) return null;
     const projected = new THREE.Vector3();
@@ -244,11 +278,16 @@ export class RainbowOverview {
     candidates.sort((first, second) =>
       first.distancePx - second.distancePx || first.depth - second.depth || first.index - second.index
     );
-    this.lastPickCandidateCount = candidates.length;
-    const normalizedOffset = candidates.length === 0
+    const preferred = preferContributors
+      ? candidates.filter((candidate) => this.contributorMask[candidate.index] === 1)
+      : [];
+    const rankedCandidates = preferred.length > 0 ? preferred : candidates;
+    this.lastPickCandidateCount = rankedCandidates.length;
+    const normalizedOffset = rankedCandidates.length === 0
       ? 0
-      : ((Math.trunc(candidateOffset) % candidates.length) + candidates.length) % candidates.length;
-    const picked = candidates[normalizedOffset] ?? null;
+      : ((Math.trunc(candidateOffset) % rankedCandidates.length) + rankedCandidates.length) %
+        rankedCandidates.length;
+    const picked = rankedCandidates[normalizedOffset] ?? null;
     return picked ? this.selectByIndex(picked.index) : null;
   }
 
@@ -258,6 +297,7 @@ export class RainbowOverview {
 
   dispose(): void {
     disposeGroup(this.group);
+    this.softPointTexture.dispose();
   }
 
   private sunDirection(): THREE.Vector3 {
@@ -350,19 +390,19 @@ export class RainbowOverview {
       new THREE.BufferAttribute(this.scenePositions, 3)
     );
     this.rainGeometry.setDrawRange(0, this.visibleCount);
-    const particles = new THREE.Points(
-      this.rainGeometry,
-      new THREE.PointsMaterial({
-        color: 0x70868d,
-        size: 0.075,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.42,
-        depthWrite: false
-      })
-    );
+    this.rainMaterial = new THREE.PointsMaterial({
+      color: 0x70868d,
+      size: 1.05,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0.09,
+      depthWrite: false,
+      fog: false
+    });
+    const particles = new THREE.Points(this.rainGeometry, this.rainMaterial);
     particles.name = "fixed-rain-field-60000-selectable-droplets";
     this.fixed.add(particles);
+    this.applyViewPresentation();
   }
 
   private reclassify(): void {
@@ -449,7 +489,53 @@ export class RainbowOverview {
     this.addContributorGlints();
     this.addSampleContributorSightlines();
     this.ensureSelection();
+    this.applyViewPresentation();
     this.applyJourneyOpacity();
+  }
+
+  private applyViewPresentation(): void {
+    const rainOpacity = this.observerView ? 0.09 : 0.25;
+    if (this.rainMaterial) {
+      this.rainMaterial.size = this.observerView ? 1.05 : 0.068;
+      this.rainMaterial.sizeAttenuation = !this.observerView;
+      this.rainMaterial.fog = !this.observerView;
+      this.rainMaterial.opacity = rainOpacity * this.journeyOpacity;
+      this.rainMaterial.needsUpdate = true;
+      this.baseOpacities.set(this.rainMaterial, rainOpacity);
+    }
+
+    const coreOpacity = 0.98;
+    if (this.contributorCoreMaterial) {
+      this.contributorCoreMaterial.size = this.observerView ? 3.8 : 2.7;
+      this.contributorCoreMaterial.sizeAttenuation = false;
+      this.contributorCoreMaterial.opacity = coreOpacity * this.journeyOpacity;
+      this.contributorCoreMaterial.needsUpdate = true;
+      this.baseOpacities.set(this.contributorCoreMaterial, coreOpacity);
+    }
+
+    const glowOpacity = this.observerView ? 0.42 : 0.26;
+    if (this.contributorGlowMaterial) {
+      this.contributorGlowMaterial.size = this.observerView ? 11.5 : 7.5;
+      this.contributorGlowMaterial.sizeAttenuation = false;
+      this.contributorGlowMaterial.opacity = glowOpacity * this.journeyOpacity;
+      this.contributorGlowMaterial.needsUpdate = true;
+      this.baseOpacities.set(this.contributorGlowMaterial, glowOpacity);
+    }
+
+    const observer = this.fixed.getObjectByName("observer");
+    if (observer) observer.visible = !this.observerView;
+    this.optical.traverse((object) => {
+      if (
+        object.name === "sun-disc-and-glow" ||
+        object.name === "sun-direction-ray" ||
+        object.name === "sun-to-eye-to-antisolar-axis" ||
+        object.name.startsWith("calculated-rainbow-band-boundary-") ||
+        object.name === "observer-centred-cone-direction-guide" ||
+        object.name === "sample-eye-to-contributing-droplet-directions"
+      ) {
+        object.visible = !this.observerView;
+      }
+    });
   }
 
   private applyJourneyOpacity(): void {
@@ -481,15 +567,16 @@ export class RainbowOverview {
 
   private addSun(sun: THREE.Vector3): void {
     const sunGroup = new THREE.Group();
+    sunGroup.name = "sun-disc-and-glow";
     const origin = opticalOrigin();
     sunGroup.position.copy(origin).addScaledVector(sun, SKY_RADIUS);
     sunGroup.add(
       new THREE.Mesh(
-        new THREE.SphereGeometry(0.48, 24, 16),
+        new THREE.SphereGeometry(0.28, 24, 16),
         new THREE.MeshBasicMaterial({ color: 0xffd968 })
       ),
       new THREE.Mesh(
-        new THREE.SphereGeometry(0.76, 20, 12),
+        new THREE.SphereGeometry(0.52, 20, 12),
         new THREE.MeshBasicMaterial({ color: 0xffbd43, transparent: true, opacity: 0.12 })
       )
     );
@@ -509,6 +596,7 @@ export class RainbowOverview {
       })
     );
     sunRay.computeLineDistances();
+    sunRay.name = "sun-direction-ray";
     this.optical.add(sunRay);
   }
 
@@ -621,20 +709,39 @@ export class RainbowOverview {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    const glints = new THREE.Points(
-      geometry,
-      new THREE.PointsMaterial({
-        size: 0.16,
-        sizeAttenuation: true,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.96,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
-      })
-    );
-    glints.name = "rainbow-made-only-from-contributing-real-droplet-ids";
-    this.optical.add(glints);
+    this.contributorGlowMaterial = new THREE.PointsMaterial({
+      size: 11.5,
+      sizeAttenuation: false,
+      vertexColors: true,
+      map: this.softPointTexture,
+      transparent: true,
+      opacity: 0.42,
+      alphaTest: 0.004,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+      blending: THREE.AdditiveBlending
+    });
+    this.contributorCoreMaterial = new THREE.PointsMaterial({
+      size: 3.8,
+      sizeAttenuation: false,
+      vertexColors: true,
+      map: this.softPointTexture,
+      transparent: true,
+      opacity: 0.98,
+      alphaTest: 0.025,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+      blending: THREE.AdditiveBlending
+    });
+    const glow = new THREE.Points(geometry, this.contributorGlowMaterial);
+    glow.name = "rainbow-glow-made-only-from-contributing-real-droplet-ids";
+    glow.renderOrder = 8;
+    const core = new THREE.Points(geometry, this.contributorCoreMaterial);
+    core.name = "rainbow-made-only-from-contributing-real-droplet-ids";
+    core.renderOrder = 9;
+    this.optical.add(glow, core);
   }
 
   private addSampleContributorSightlines(): void {

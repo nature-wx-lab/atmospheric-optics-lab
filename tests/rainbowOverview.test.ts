@@ -7,6 +7,10 @@ import {
   observeRainField
 } from "../src/physics/rainField.ts";
 import {
+  defaultObserverLookDirection,
+  observerRainbowVerticalFovDeg
+} from "../src/physics/rainbowView.ts";
+import {
   OBSERVER_OPTICAL_ORIGIN,
   rainbowZoomFrame,
   sunDirectionFromAngles
@@ -42,6 +46,30 @@ function overviewCamera(): THREE.PerspectiveCamera {
     OBSERVER_OPTICAL_ORIGIN.y,
     OBSERVER_OPTICAL_ORIGIN.z
   );
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  return camera;
+}
+
+function observerEyeCamera(): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera(
+    observerRainbowVerticalFovDeg(
+      1,
+      12,
+      VIEWPORT_WIDTH / VIEWPORT_HEIGHT
+    ),
+    VIEWPORT_WIDTH / VIEWPORT_HEIGHT,
+    0.03,
+    250
+  );
+  const origin = new THREE.Vector3(
+    OBSERVER_OPTICAL_ORIGIN.x,
+    OBSERVER_OPTICAL_ORIGIN.y,
+    OBSERVER_OPTICAL_ORIGIN.z
+  );
+  const look = defaultObserverLookDirection(12, 225);
+  camera.position.copy(origin);
+  camera.lookAt(origin.clone().add(new THREE.Vector3(look.x, look.y, look.z)));
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
   return camera;
@@ -276,6 +304,95 @@ test("screen picking is contributor-neutral and cycles overlapping candidates in
     } finally {
       journey.dispose();
     }
+  } finally {
+    overview.dispose();
+  }
+});
+
+test("observer-eye presentation makes the real contributor IDs a wide readable arc", () => {
+  const overview = new RainbowOverview();
+  try {
+    overview.setObserverView(true);
+    const camera = observerEyeCamera();
+    const glints = overview.group.getObjectByName(
+      "rainbow-made-only-from-contributing-real-droplet-ids"
+    );
+    const glow = overview.group.getObjectByName(
+      "rainbow-glow-made-only-from-contributing-real-droplet-ids"
+    );
+    const rain = overview.group.getObjectByName(
+      "fixed-rain-field-60000-selectable-droplets"
+    );
+    assert.ok(glints instanceof THREE.Points);
+    assert.ok(glow instanceof THREE.Points);
+    assert.ok(rain instanceof THREE.Points);
+    assert.ok(glints.material instanceof THREE.PointsMaterial);
+    assert.ok(glow.material instanceof THREE.PointsMaterial);
+    assert.ok(rain.material instanceof THREE.PointsMaterial);
+
+    const positions = glints.geometry.getAttribute("position");
+    const projected = new THREE.Vector3();
+    let visible = 0;
+    let minimumX = Infinity;
+    let maximumX = -Infinity;
+    for (let index = 0; index < positions.count; index += 1) {
+      projected.fromBufferAttribute(positions, index).project(camera);
+      if (
+        projected.z < -1 ||
+        projected.z > 1 ||
+        Math.abs(projected.x) > 1 ||
+        Math.abs(projected.y) > 1
+      ) {
+        continue;
+      }
+      visible += 1;
+      minimumX = Math.min(minimumX, projected.x);
+      maximumX = Math.max(maximumX, projected.x);
+    }
+
+    assert.equal(visible, overview.getSnapshot().contributingDroplets);
+    assert.ok((maximumX - minimumX) * 0.5 >= 0.7);
+    assert.equal(glints.material.sizeAttenuation, false);
+    assert.ok(glints.material.size >= 3.5);
+    assert.ok(glow.material.size >= 9);
+    assert.equal(rain.material.sizeAttenuation, false);
+    assert.ok(rain.material.opacity < glow.material.opacity);
+    assert.equal(overview.group.getObjectByName("observer")?.visible, false);
+    assert.equal(
+      overview.group.getObjectByName("sun-to-eye-to-antisolar-axis")?.visible,
+      false
+    );
+
+    overview.setObserverView(false);
+    assert.equal(overview.group.getObjectByName("observer")?.visible, true);
+    assert.equal(rain.material.sizeAttenuation, true);
+    assert.equal(
+      overview.group.getObjectByName("sun-to-eye-to-antisolar-axis")?.visible,
+      true
+    );
+  } finally {
+    overview.dispose();
+  }
+});
+
+test("observer-eye rainbow taps prefer a contributing ID over overlapping gray drops", () => {
+  const overview = new RainbowOverview();
+  try {
+    const camera = observerEyeCamera();
+    const droplets = projectedVisibleDroplets(overview, camera);
+    const target = findNonContributorBesideContributor(droplets);
+    const picked = overview.pickDroplet(
+      camera,
+      target.screenX,
+      target.screenY,
+      VIEWPORT_WIDTH,
+      VIEWPORT_HEIGHT,
+      15,
+      0,
+      true
+    );
+    assert.ok(picked);
+    assert.equal(picked.observation.contributes, true);
   } finally {
     overview.dispose();
   }

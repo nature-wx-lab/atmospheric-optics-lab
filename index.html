@@ -32,7 +32,7 @@
           <p class="lede">大量の雨滴から選んだ実在IDを、1粒の光路まで追う。</p>
         </div>
         <div class="top-actions" aria-label="表示操作">
-          <button id="reset-view" class="button button-quiet" type="button">視点を戻す</button>
+          <button id="reset-view" class="button button-quiet" type="button">虹が見える視点</button>
           <a class="button button-quiet" href="https://naturewxlab.com/" rel="home">公式HP</a>
         </div>
       </header>
@@ -120,7 +120,7 @@
 
           <div class="operation-card">
             <strong>3D操作</strong>
-            <p>ドラッグで360°回転。色付き・灰色を問わず、雨滴をクリック／短くタップするとその実在IDを選択できます。</p>
+            <p>「目から見る」はドラッグで視線を360°、「外から360°」は構造を回転。雨滴をクリック／短くタップすると、その実在IDを選択できます。</p>
             <div id="drop-selection-actions" class="drop-selection-actions" aria-label="虹に寄与する水滴を順に選択">
               <button id="previous-contributor" type="button">← 前の寄与滴</button>
               <button id="next-contributor" type="button">次の寄与滴 →</button>
@@ -217,16 +217,38 @@
             <canvas
               id="optics-canvas"
               tabindex="0"
-              aria-label="虹とハロを観察する3Dシミュレーション。雨滴をクリックまたは短くタップして選択。矢印キーで回転、プラスとマイナスで連続ズーム、Homeで全景、Endで光路へ移動できます。"
+              aria-label="虹とハロを観察する3Dシミュレーション。目から見る視点ではドラッグで視線を動かし、外から360度では構造を回転できます。雨滴をクリックまたは短くタップして選択。プラスとマイナスで連続ズーム、Homeで全景、Endで光路へ移動できます。"
               aria-describedby="semantic-note"
             ></canvas>
+            <div
+              id="rainbow-perspective-switch"
+              class="perspective-switch"
+              role="group"
+              aria-label="虹の視点"
+            >
+              <button
+                class="is-active"
+                type="button"
+                data-rainbow-perspective="eye"
+                aria-pressed="true"
+              >
+                目から見る
+              </button>
+              <button
+                type="button"
+                data-rainbow-perspective="structure"
+                aria-pressed="false"
+              >
+                外から360°
+              </button>
+            </div>
             <div class="canvas-overlay canvas-overlay-top">
-              <span id="view-state">観察者を中心にした虹の円錐</span>
+              <span id="view-state">観察者の目から見える虹</span>
               <span id="fps-state">WebGL 2</span>
             </div>
             <div class="canvas-overlay canvas-overlay-bottom">
-              <span class="drag-hint">↔ ドラッグして裏側まで確認</span>
-              <span id="camera-readout">方位 37° / 仰角 17° / 意味ズーム 0%</span>
+              <span id="drag-hint" class="drag-hint">↔ ドラッグで視線を360°</span>
+              <span id="camera-readout">目の位置 / 視線を読み込み中</span>
             </div>
             <div id="webgl-fallback" class="fallback" hidden>
               <h3>3D表示を開始できませんでした</h3>
