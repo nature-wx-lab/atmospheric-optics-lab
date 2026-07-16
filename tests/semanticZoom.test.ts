@@ -44,6 +44,10 @@ test("zoom frame is bounded, continuous, and progressively reveals the represent
     const frame = rainbowZoomFrame(step / 1_000);
     for (const value of [
       frame.targetBlend,
+      frame.skyOpacity,
+      frame.radianceOpacity,
+      frame.resolvedFieldOpacity,
+      frame.resolvedContributorOpacity,
       frame.overviewOpacity,
       frame.focusMarkerOpacity,
       frame.surfaceOpacity,
@@ -65,6 +69,21 @@ test("zoom frame is bounded, continuous, and progressively reveals the represent
   assert.equal(chapterForProgress(0.55), "droplet");
   assert.equal(chapterForProgress(0.75), "ray");
   assert.equal(chapterForProgress(1), "dispersion");
+  const far = rainbowZoomFrame(0);
+  const resolving = rainbowZoomFrame(0.3);
+  const close = rainbowZoomFrame(0.55);
+  assert.equal(far.skyOpacity, 1);
+  assert.equal(far.radianceOpacity, 1);
+  assert.equal(far.resolvedFieldOpacity, 0);
+  assert.equal(far.resolvedContributorOpacity, 0);
+  assert.ok(resolving.radianceOpacity > 0 && resolving.radianceOpacity < 1);
+  assert.ok(resolving.resolvedFieldOpacity > 0);
+  assert.ok(resolving.resolvedContributorOpacity > 0.7);
+  assert.ok(
+    resolving.resolvedFieldOpacity < resolving.resolvedContributorOpacity,
+    "the gray rain field should resolve later than the colored contributors"
+  );
+  assert.equal(close.radianceOpacity, 0);
 });
 
 test("progressive draw count never hides the complete endpoints", () => {

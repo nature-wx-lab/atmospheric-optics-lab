@@ -116,10 +116,11 @@ export class RainbowJourney {
 
   applyZoom(frame: RainbowZoomFrame): void {
     this.frame = frame;
+    this.overview.setSemanticFrame(frame);
     this.overview.setJourneyOpacity(frame.overviewOpacity);
     this.detail.setJourneyFrame(frame);
-    this.markerMaterials[0]!.opacity = 0.92 * frame.focusMarkerOpacity;
-    this.markerMaterials[1]!.opacity = 0.23 * frame.focusMarkerOpacity;
+    this.markerMaterials[0]!.opacity = 0.76 * frame.focusMarkerOpacity;
+    this.markerMaterials[1]!.opacity = 0.16 * frame.focusMarkerOpacity;
     this.focusGuideMaterial.opacity = this.selection.observation.contributes
       ? 0.3 * Math.max(frame.focusMarkerOpacity, frame.representativeRayOpacity)
       : 0.26 * frame.focusMarkerOpacity;
@@ -229,8 +230,8 @@ export class RainbowJourney {
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 12), coreMaterial);
-    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.25, 18, 12), glowMaterial);
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.075, 18, 12), coreMaterial);
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.16, 18, 12), glowMaterial);
     core.name = "selected-drop-exact-field-position-core";
     glow.name = "selected-drop-exact-field-position-glow";
     this.marker.add(core, glow);
@@ -263,7 +264,11 @@ export class RainbowJourney {
       color: `#${rayColor.getHexString()}`,
       reachesObserver: observation.contributes
     });
-    this.markerMaterials[0]?.color.set(observation.contributes ? 0xffffff : 0xc4cdd0);
+    if (observation.contributes) {
+      this.markerMaterials[0]?.color.copy(rayColor).lerp(new THREE.Color(0xffffff), 0.25);
+    } else {
+      this.markerMaterials[0]?.color.set(0xc4cdd0);
+    }
     this.markerMaterials[1]?.color.copy(rayColor);
     this.focusGuideMaterial.color.set(observation.contributes ? rayColor : 0x7f9095);
     this.focusGuide.name = observation.contributes

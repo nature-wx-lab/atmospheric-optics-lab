@@ -309,11 +309,15 @@ test("screen picking is contributor-neutral and cycles overlapping candidates in
   }
 });
 
-test("observer-eye presentation makes the real contributor IDs a wide readable arc", () => {
+test("observer-eye presentation starts with continuous radiance and resolves real IDs only while zooming", () => {
   const overview = new RainbowOverview();
   try {
     overview.setObserverView(true);
-    const camera = observerEyeCamera();
+    overview.setSemanticFrame(rainbowZoomFrame(0));
+    const radiance = overview.group.getObjectByName(
+      "continuous-relative-radiance-integrated-from-unresolved-rain-field"
+    );
+    const sky = overview.group.getObjectByName("observer-sky-radiance-background");
     const glints = overview.group.getObjectByName(
       "rainbow-made-only-from-contributing-real-droplet-ids"
     );
@@ -323,6 +327,10 @@ test("observer-eye presentation makes the real contributor IDs a wide readable a
     const rain = overview.group.getObjectByName(
       "fixed-rain-field-60000-selectable-droplets"
     );
+    assert.ok(radiance instanceof THREE.Mesh);
+    assert.ok(sky instanceof THREE.Mesh);
+    assert.ok(radiance.material instanceof THREE.ShaderMaterial);
+    assert.ok(sky.material instanceof THREE.MeshBasicMaterial);
     assert.ok(glints instanceof THREE.Points);
     assert.ok(glow instanceof THREE.Points);
     assert.ok(rain instanceof THREE.Points);
@@ -330,42 +338,50 @@ test("observer-eye presentation makes the real contributor IDs a wide readable a
     assert.ok(glow.material instanceof THREE.PointsMaterial);
     assert.ok(rain.material instanceof THREE.PointsMaterial);
 
-    const positions = glints.geometry.getAttribute("position");
-    const projected = new THREE.Vector3();
-    let visible = 0;
-    let minimumX = Infinity;
-    let maximumX = -Infinity;
-    for (let index = 0; index < positions.count; index += 1) {
-      projected.fromBufferAttribute(positions, index).project(camera);
-      if (
-        projected.z < -1 ||
-        projected.z > 1 ||
-        Math.abs(projected.x) > 1 ||
-        Math.abs(projected.y) > 1
-      ) {
-        continue;
-      }
-      visible += 1;
-      minimumX = Math.min(minimumX, projected.x);
-      maximumX = Math.max(maximumX, projected.x);
+    const radianceAlpha = radiance.geometry.getAttribute("radianceAlpha");
+    assert.ok(radianceAlpha.count > 40_000);
+    let illuminatedVertices = 0;
+    for (let index = 0; index < radianceAlpha.count; index += 1) {
+      if (radianceAlpha.getX(index) > 0.08) illuminatedVertices += 1;
     }
-
-    assert.equal(visible, overview.getSnapshot().contributingDroplets);
-    assert.ok((maximumX - minimumX) * 0.5 >= 0.7);
+    assert.ok(illuminatedVertices > 2_000);
+    assert.equal(radiance.material.uniforms.uOpacity?.value, 1);
+    assert.equal(sky.material.opacity, 1);
+    assert.equal(radiance.visible, true);
+    assert.equal(sky.visible, true);
+    assert.equal(glints.visible, false);
+    assert.equal(glow.visible, false);
+    assert.equal(rain.visible, false);
     assert.equal(glints.material.sizeAttenuation, false);
-    assert.ok(glints.material.size >= 3.5);
-    assert.ok(glow.material.size >= 9);
+    assert.equal(glints.material.opacity, 0);
+    assert.equal(glow.material.opacity, 0);
     assert.equal(rain.material.sizeAttenuation, false);
-    assert.ok(rain.material.opacity < glow.material.opacity);
+    assert.equal(rain.material.opacity, 0);
     assert.equal(overview.group.getObjectByName("observer")?.visible, false);
     assert.equal(
       overview.group.getObjectByName("sun-to-eye-to-antisolar-axis")?.visible,
       false
     );
 
+    overview.setSemanticFrame(rainbowZoomFrame(0.3));
+    assert.ok(radiance.material.uniforms.uOpacity?.value > 0);
+    assert.ok(radiance.material.uniforms.uOpacity?.value < 1);
+    assert.ok(glints.material.opacity > 0.45);
+    assert.ok(glow.material.opacity > 0.07);
+    assert.ok(rain.material.opacity > 0);
+    assert.ok(rain.material.opacity < glow.material.opacity);
+    assert.ok(glints.material.size <= 1.5);
+    assert.ok(glow.material.size <= 3.6);
+    assert.equal(glints.visible, true);
+    assert.equal(glow.visible, true);
+    assert.equal(rain.visible, true);
+
     overview.setObserverView(false);
     assert.equal(overview.group.getObjectByName("observer")?.visible, true);
     assert.equal(rain.material.sizeAttenuation, true);
+    assert.equal(radiance.material.uniforms.uOpacity?.value, 0);
+    assert.equal(radiance.visible, false);
+    assert.equal(sky.visible, false);
     assert.equal(
       overview.group.getObjectByName("sun-to-eye-to-antisolar-axis")?.visible,
       true

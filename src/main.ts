@@ -372,8 +372,8 @@ function rainbowCameraPose(frame: RainbowZoomFrame): RainbowCameraPose {
     .clone()
     .addScaledVector(endDirection, RAINBOW_CAMERA_NEAR);
   const endForward = focus.position.clone().sub(endPosition).normalize();
-  const turnProgress = smoothstep(0.04, 0.72, frame.progress);
-  const travelProgress = smoothstep(0.14, 0.72, frame.progress);
+  const turnProgress = smoothstep(0.12, 0.68, frame.progress);
+  const travelProgress = smoothstep(0.3, 0.72, frame.progress);
   const position = origin.clone().lerp(endPosition, travelProgress);
   const forward = slerpDirection(eyeLookDirection, endForward, turnProgress);
   const gazeDistance = THREE.MathUtils.lerp(
@@ -744,9 +744,9 @@ function updateRainbowExplanation(
   switch (frame.chapter) {
     case "overview":
       setText("#scene-kicker", "RAIN FIELD → RAINBOW");
-      setText("#scene-title", "大量の実在ID雨滴から、虹になる滴だけが光る");
+      setText("#scene-title", "未分解の大量雨滴の光が、連続した虹の帯になる");
       setFacts(
-        ["表示雨滴", "現在の寄与滴", "選択ID", "選択状態"],
+        ["選択用代表雨滴", "寄与候補ID", "選択ID", "選択状態"],
         [
           `${formatCount(focus.visibleDroplets)} / ${formatCount(focus.totalDroplets)}滴`,
           `${formatCount(focus.contributingDroplets)}滴`,
@@ -754,17 +754,17 @@ function updateRainbowExplanation(
           focus.contributes ? `${focus.dominantWavelengthNm?.toFixed(1)} nm相当` : "虹帯外"
         ]
       );
-      setText("#explanation-title", "1滴は1つの輝点。多数の滴が連なって弧になる");
+      setText("#explanation-title", "遠景では1滴ずつ見えず、方向ごとの散乱光が積算される");
       setText(
         "#explanation-body",
-        "灰色も色付きも同じ固定雨滴配列です。既定の「目から見る」では、観察者を頂点とする波長別の円錐帯へ入った実在IDだけが同じ見かけの方向に重なり、弧になります。光点の大きさは視認用で、絶対輝度ではありません。"
+        "全景の滑らかな帯は、波長別の停留角を密に積分し、太陽円盤と雨滴径の広がりで平滑化した相対放射輝度近似です。独立した虹画像ではありません。ズームすると、同じ角条件を満たす固定seedの代表雨滴ID層が徐々に解像されます。"
       );
       break;
     case "contributor":
       setText("#scene-kicker", focus.contributes ? "RAINBOW → EXISTING CONTRIBUTOR" : "RAIN FIELD → NON-CONTRIBUTOR");
       setText(
         "#scene-title",
-        focus.contributes ? "色付きの実在雨滴を、その位置から追い続ける" : "選択した灰色の雨滴が、なぜ虹にならないかを見る"
+        focus.contributes ? "連続した虹の帯を、同じ方向の代表雨滴へ分解する" : "選択した灰色の雨滴が、なぜ虹にならないかを見る"
       );
       setFacts(
         ["雨滴ID", "観測上の状態", "反太陽点から", "観察者からの距離"],
@@ -777,12 +777,12 @@ function updateRainbowExplanation(
       );
       setText(
         "#explanation-title",
-        focus.contributes ? "拡大対象は、全景に描かれていた同じID" : "光を目へ結ばないことも、選択結果の一部"
+        focus.contributes ? "全景の同じ見かけ方向に潜んでいた代表ID" : "光を目へ結ばないことも、選択結果の一部"
       );
       setText(
         "#explanation-body",
         focus.contributes
-          ? "選択点、拡大球、光路始点はすべて同じ雨滴IDと世界座標です。同じ角方向には近距離・遠距離の別IDもあり、虹角だけから固有距離は決まりません。"
+          ? "連続帯の下に、同じ観察者・太陽・虹角で分類した代表雨滴ID層を重ねています。選択点、拡大球、光路始点はすべて同じIDと世界座標です。同じ方向には近距離・遠距離の別IDもあり、虹角だけから固有距離は決まりません。"
           : `この滴の視線角は虹帯から ${Math.abs(focus.angularErrorDeg).toFixed(2)}°外れています。水滴自体は拡大できますが、虹の射出光を観察者の目へ偽って接続しません。`
       );
       break;
@@ -851,17 +851,17 @@ function updateRainbowExplanation(
     "#fps-state",
     frame.chapter === "dispersion"
       ? "解析式 / 代表7波長"
-      : `${formatCount(focus.visibleDroplets)}滴中 ${formatCount(focus.contributingDroplets)}滴が寄与`
+      : `選択用代表ID ${formatCount(focus.visibleDroplets)}中 ${formatCount(focus.contributingDroplets)}候補`
   );
   setText(
     "#semantic-note",
-    `固定seedの${formatCount(focus.totalDroplets)}滴から選んだ同じIDを、水滴内部まで追う対数的な意味ズームです。標本数・配置距離・画面スケールは実際の降水量や虹までの固有距離を表しません。`
+    `遠景は未分解雨滴群の相対放射輝度近似です。固定seedの${formatCount(focus.totalDroplets)}代表IDから選んだ同じ1滴を、水滴内部まで追います。標本数・配置距離・画面スケールは実際の降水量や虹までの固有距離を表しません。`
   );
   setModelItems([
-    "固定した60,000滴の代表標本に永続IDを付け、観察者・太陽・波長の角度条件を再計算します。目から見る光点と外側3Dの点は同じID・同じ世界位置です。",
+    "遠景は380–780 nmの波長別散乱を相対太陽スペクトルで重み付けした連続相対放射輝度です。接近すると固定した60,000滴の代表標本を解像し、選択点と外側3Dの点は同じID・同じ世界位置を保ちます。",
     "直径0.45–1.00 mmの等価球水滴・幾何光学・空気の屈折率を1とする近似です。大粒雨滴の扁平化は未実装です。",
     "寄与滴では、視線角に一致する停留角の屈折率を代表波長間で数値的に解きます。非寄与滴の比較光線は目へ接続しません。",
-    "過剰虹・干渉・回折・太陽視直径によるぼけ・絶対輝度にはAiry／Lorenz–Mie等の波動光学が必要で、未計算です。"
+    "遠景帯は約0.53°の太陽円盤と代表的な雨滴径広がりを等価幅で平滑化した表示用近似です。過剰虹・偏光・絶対輝度にはAiry／Lorenz–Mie等が必要で、未計算です。"
   ]);
 }
 
@@ -1570,7 +1570,7 @@ function pickRainDropAt(
   const candidateCount = rainbowJourney.getLastPickCandidateCount();
   if (!snapshot) {
     resetOverlapPick();
-    setText("#zoom-status", "近くに選択できる雨滴がありません。灰色または色付きの点を短くタップしてください。");
+    setText("#zoom-status", "近くに選択できる代表雨滴がありません。全景では虹の帯を、接近後は雨滴の点を短くタップしてください。");
     return;
   }
   const normalizedOffset = candidateCount > 0 ? candidateOffset % candidateCount : 0;

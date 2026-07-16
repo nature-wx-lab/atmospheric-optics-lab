@@ -29,7 +29,7 @@
             <h1>大気光学3Dラボ</h1>
             <span class="status-chip">開発中 β</span>
           </div>
-          <p class="lede">大量の雨滴から選んだ実在IDを、1粒の光路まで追う。</p>
+          <p class="lede">遠景の連続した虹から、代表雨滴1粒の光路まで追う。</p>
         </div>
         <div class="top-actions" aria-label="表示操作">
           <button id="reset-view" class="button button-quiet" type="button">虹が見える視点</button>
@@ -256,7 +256,7 @@
             </div>
           </div>
           <p id="semantic-note" class="semantic-note">
-            60,000滴の代表標本から選んだ同じIDを、水滴内部まで追う対数的な「意味ズーム」です。実際の雨滴数・降水量や画面上の実測縮尺を示すものではありません。
+            遠景の連続した相対放射輝度から、固定60,000滴の代表標本、選んだ同じID、水滴内部へ進む対数的な「意味ズーム」です。実際の雨滴数・降水量や画面上の実測縮尺を示すものではありません。
           </p>
         </section>
 
@@ -300,10 +300,10 @@
           <details class="model-details">
             <summary>計算モデルと限界</summary>
             <ul id="model-list">
-              <li id="model-1">球形水滴・幾何光学・空気の屈折率を1とする近似です。</li>
-              <li id="model-2">代表波長404.7–656.3 nmの水の分散を使います。</li>
-              <li id="model-3">波動光学が必要な過剰虹や強度分布は、現βでは扱いません。</li>
-              <li id="model-4">雨滴の描画密度は理解用で、実際の降水量ではありません。</li>
+              <li id="model-1">遠景は380–780 nmを積分した連続相対放射輝度、接近後は固定60,000滴の代表標本です。</li>
+              <li id="model-2">球形水滴・幾何光学・空気の屈折率を1とする近似です。</li>
+              <li id="model-3">太陽円盤と雨滴径広がりは等価幅で平滑化し、完全なAiry／Lorenz–Mie計算ではありません。</li>
+              <li id="model-4">代表雨滴数・描画密度・配置距離は、実際の降水量や虹までの固有距離を表しません。</li>
             </ul>
           </details>
         </aside>
@@ -314,7 +314,10 @@
           出典・基礎：<a href="https://glossary.ametsoc.org/wiki/rainbow/" rel="noreferrer">AMS Glossary: rainbow</a> ／
           <a href="https://doi.org/10.1175/BAMS-D-20-0101.1" rel="noreferrer">Businger: observer-centred rainbow cone</a> ／
           <a href="https://doi.org/10.1145/2077341.2077344" rel="noreferrer">Sadeghi et al.: physically based rainbows</a> ／
+          <a href="https://doi.org/10.1364/AO.30.003415" rel="noreferrer">Lynch &amp; Schwartz: Rainbows and fogbows</a> ／
+          <a href="https://doi.org/10.1364/AO.37.001506" rel="noreferrer">Lee: Mie, Airy, and the natural rainbow</a> ／
           <a href="https://iapws.org/documents/release/Rindex.download" rel="noreferrer">IAPWS R9-97 水の屈折率</a> ／
+          <a href="https://jcgt.org/published/0002/02/01/" rel="noreferrer">Wyman et al.: CIE XYZ analytic fits</a> ／
           <a href="https://www.sciencedirect.com/science/article/abs/pii/S037015730100076X" rel="noreferrer">Adam: The mathematical physics of rainbows and glories</a> ／
           <a href="https://cloudatlas.wmo.int/en/halo-phenomena.html" rel="noreferrer">WMO Cloud Atlas: halo</a>
         </p>

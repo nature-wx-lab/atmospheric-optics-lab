@@ -16,6 +16,10 @@ export interface RainbowZoomFrame {
   readonly chapter: RainbowZoomChapter;
   readonly semanticSpanM: number;
   readonly targetBlend: number;
+  readonly skyOpacity: number;
+  readonly radianceOpacity: number;
+  readonly resolvedFieldOpacity: number;
+  readonly resolvedContributorOpacity: number;
   readonly overviewOpacity: number;
   readonly focusMarkerOpacity: number;
   readonly detailScale: number;
@@ -109,11 +113,17 @@ export function rainbowZoomFrame(progress: number): RainbowZoomFrame {
     chapter: chapterForProgress(value),
     semanticSpanM: semanticSpanM(value),
     targetBlend: smoothstep(0.06, 0.6, value),
+    skyOpacity: 1 - 0.78 * smoothstep(0.36, 0.76, value),
+    radianceOpacity: 1 - smoothstep(0.14, 0.39, value),
+    resolvedFieldOpacity:
+      smoothstep(0.22, 0.48, value) * (1 - smoothstep(0.62, 0.85, value)),
+    resolvedContributorOpacity:
+      smoothstep(0.1, 0.32, value) * (1 - smoothstep(0.62, 0.84, value)),
     overviewOpacity: 1 - smoothstep(0.6, 0.84, value),
     focusMarkerOpacity:
       0.9 *
       smoothstep(0.12, 0.3, value) *
-      (1 - smoothstep(0.62, 0.84, value)),
+      (1 - smoothstep(0.46, 0.64, value)),
     detailScale,
     surfaceOpacity: smoothstep(0.3, 0.56, value),
     representativeRayOpacity: smoothstep(0.62, 0.74, value),

@@ -13,7 +13,11 @@ import {
   radians,
   type RainbowOrder
 } from "../physics/rainbow";
-import { OBSERVER_OPTICAL_ORIGIN } from "../physics/semanticZoom";
+import { buildRainbowRadianceProfile } from "../physics/rainbowRadiance";
+import {
+  OBSERVER_OPTICAL_ORIGIN,
+  type RainbowZoomFrame
+} from "../physics/semanticZoom";
 
 const SKY_RADIUS = 14.5;
 const METERS_TO_SCENE_UNITS = 0.046;
@@ -73,6 +77,15 @@ function directionOnCone(
     .normalize();
 }
 
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function smoothUnit(value: number): number {
+  const unit = clamp01(value);
+  return unit * unit * (3 - 2 * unit);
+}
+
 function disposeGroup(group: THREE.Group): void {
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
@@ -128,6 +141,8 @@ export class RainbowOverview {
   private readonly baseOpacities = new WeakMap<THREE.Material, number>();
   private readonly baseTransparency = new WeakMap<THREE.Material, boolean>();
   private readonly baseDepthWrite = new WeakMap<THREE.Material, boolean>();
+  private skyMaterial: THREE.MeshBasicMaterial | null = null;
+  private rainbowRadianceMaterial: THREE.ShaderMaterial | null = null;
   private rainMaterial: THREE.PointsMaterial | null = null;
   private contributorCoreMaterial: THREE.PointsMaterial | null = null;
   private contributorGlowMaterial: THREE.PointsMaterial | null = null;
@@ -139,6 +154,10 @@ export class RainbowOverview {
   private sunAzimuth = 225;
   private density = 0.7;
   private journeyOpacity = 1;
+  private skyOpacity = 1;
+  private radianceOpacity = 1;
+  private resolvedFieldOpacity = 0;
+  private resolvedContributorOpacity = 0;
   private observerView = true;
   private lastPickCandidateCount = 0;
 
@@ -154,6 +173,7 @@ export class RainbowOverview {
     this.buildScenePositions();
     this.visibleCount = Math.round(this.droplets.length * this.density);
     this.addObserver();
+    this.addObserverSkyDome();
     this.addHorizon();
     this.addFixedRainField();
     this.reclassify();
@@ -185,12 +205,23 @@ export class RainbowOverview {
   setObserverView(observerView: boolean): void {
     this.observerView = observerView;
     this.applyViewPresentation();
+    this.applyJourneyOpacity();
   }
 
   setJourneyOpacity(opacity: number): void {
     this.journeyOpacity = THREE.MathUtils.clamp(opacity, 0, 1);
+    this.applyViewPresentation();
     this.applyJourneyOpacity();
     this.group.visible = this.journeyOpacity > 0.001;
+  }
+
+  setSemanticFrame(frame: RainbowZoomFrame): void {
+    this.skyOpacity = frame.skyOpacity;
+    this.radianceOpacity = frame.radianceOpacity;
+    this.resolvedFieldOpacity = frame.resolvedFieldOpacity;
+    this.resolvedContributorOpacity = frame.resolvedContributorOpacity;
+    this.applyViewPresentation();
+    this.applyJourneyOpacity();
   }
 
   getSnapshot(): RainbowOverviewSnapshot {
@@ -384,6 +415,47 @@ export class RainbowOverview {
     this.fixed.add(horizon);
   }
 
+  private addObserverSkyDome(): void {
+    const geometry = new THREE.SphereGeometry(SKY_RADIUS * 4.5, 64, 36);
+    const position = geometry.getAttribute("position");
+    const colors = new Float32Array(position.count * 3);
+    const direction = new THREE.Vector3();
+    const lower = new THREE.Color(0x071116);
+    const horizon = new THREE.Color(0x70858d);
+    const zenith = new THREE.Color(0x244b66);
+    const color = new THREE.Color();
+    for (let index = 0; index < position.count; index += 1) {
+      direction.fromBufferAttribute(position, index).normalize();
+      if (direction.y >= 0) {
+        const blend = Math.pow(clamp01(direction.y), 0.58);
+        color.lerpColors(horizon, zenith, blend);
+      } else {
+        const blend = Math.pow(clamp01(-direction.y), 0.38);
+        color.lerpColors(horizon, lower, blend);
+      }
+      const offset = index * 3;
+      colors[offset] = color.r;
+      colors[offset + 1] = color.g;
+      colors[offset + 2] = color.b;
+    }
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    this.skyMaterial = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 1,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false
+    });
+    const sky = new THREE.Mesh(geometry, this.skyMaterial);
+    sky.name = "observer-sky-radiance-background";
+    sky.position.copy(opticalOrigin());
+    sky.renderOrder = -100;
+    this.fixed.add(sky);
+  }
+
   private addFixedRainField(): void {
     this.rainGeometry.setAttribute(
       "position",
@@ -391,11 +463,13 @@ export class RainbowOverview {
     );
     this.rainGeometry.setDrawRange(0, this.visibleCount);
     this.rainMaterial = new THREE.PointsMaterial({
-      color: 0x70868d,
-      size: 1.05,
+      color: 0x5a747d,
+      size: 1.2,
       sizeAttenuation: false,
+      map: this.softPointTexture,
       transparent: true,
-      opacity: 0.09,
+      opacity: 0.022,
+      alphaTest: 0.004,
       depthWrite: false,
       fog: false
     });
@@ -486,6 +560,7 @@ export class RainbowOverview {
     this.addAntisolarAxis(sun, antisolar);
     this.addCalculatedBandGuides(antisolar, first, second);
     this.addConeGuides(antisolar, first, second);
+    this.addIntegratedRainbowRadiance(antisolar, first, second);
     this.addContributorGlints();
     this.addSampleContributorSightlines();
     this.ensureSelection();
@@ -494,36 +569,86 @@ export class RainbowOverview {
   }
 
   private applyViewPresentation(): void {
-    const rainOpacity = this.observerView ? 0.09 : 0.25;
+    const skyBaseOpacity = this.observerView ? this.skyOpacity : 0;
+    if (this.skyMaterial) {
+      this.skyMaterial.opacity = skyBaseOpacity * this.journeyOpacity;
+      this.baseOpacities.set(this.skyMaterial, skyBaseOpacity);
+    }
+    const sky = this.fixed.getObjectByName("observer-sky-radiance-background");
+    if (sky) sky.visible = this.observerView && this.skyOpacity > 0.001;
+
+    if (this.rainbowRadianceMaterial) {
+      const uniform = this.rainbowRadianceMaterial.uniforms.uOpacity;
+      if (uniform) {
+        uniform.value =
+          (this.observerView ? this.radianceOpacity : 0) * this.journeyOpacity;
+      }
+    }
+    const radiance = this.optical.getObjectByName(
+      "continuous-relative-radiance-integrated-from-unresolved-rain-field"
+    );
+    if (radiance) {
+      radiance.visible = this.observerView && this.radianceOpacity > 0.001;
+    }
+
+    const rainOpacity = this.observerView
+      ? 0.022 * this.resolvedFieldOpacity
+      : 0.25;
     if (this.rainMaterial) {
-      this.rainMaterial.size = this.observerView ? 1.05 : 0.068;
+      this.rainMaterial.size = this.observerView ? 1.2 : 0.068;
       this.rainMaterial.sizeAttenuation = !this.observerView;
       this.rainMaterial.fog = !this.observerView;
       this.rainMaterial.opacity = rainOpacity * this.journeyOpacity;
       this.rainMaterial.needsUpdate = true;
       this.baseOpacities.set(this.rainMaterial, rainOpacity);
     }
+    const rain = this.fixed.getObjectByName(
+      "fixed-rain-field-60000-selectable-droplets"
+    );
+    if (rain) {
+      rain.visible = !this.observerView || this.resolvedFieldOpacity > 0.001;
+    }
 
-    const coreOpacity = 0.98;
+    const coreOpacity = this.observerView
+      ? 0.56 * this.resolvedContributorOpacity
+      : 0.98;
     if (this.contributorCoreMaterial) {
-      this.contributorCoreMaterial.size = this.observerView ? 3.8 : 2.7;
+      this.contributorCoreMaterial.size = this.observerView ? 1.5 : 2.7;
       this.contributorCoreMaterial.sizeAttenuation = false;
       this.contributorCoreMaterial.opacity = coreOpacity * this.journeyOpacity;
       this.contributorCoreMaterial.needsUpdate = true;
       this.baseOpacities.set(this.contributorCoreMaterial, coreOpacity);
     }
+    const contributorCore = this.optical.getObjectByName(
+      "rainbow-made-only-from-contributing-real-droplet-ids"
+    );
+    if (contributorCore) {
+      contributorCore.visible =
+        !this.observerView || this.resolvedContributorOpacity > 0.001;
+    }
 
-    const glowOpacity = this.observerView ? 0.42 : 0.26;
+    const glowOpacity = this.observerView
+      ? 0.1 * this.resolvedContributorOpacity
+      : 0.26;
     if (this.contributorGlowMaterial) {
-      this.contributorGlowMaterial.size = this.observerView ? 11.5 : 7.5;
+      this.contributorGlowMaterial.size = this.observerView ? 3.6 : 7.5;
       this.contributorGlowMaterial.sizeAttenuation = false;
       this.contributorGlowMaterial.opacity = glowOpacity * this.journeyOpacity;
       this.contributorGlowMaterial.needsUpdate = true;
       this.baseOpacities.set(this.contributorGlowMaterial, glowOpacity);
     }
+    const contributorGlow = this.optical.getObjectByName(
+      "rainbow-glow-made-only-from-contributing-real-droplet-ids"
+    );
+    if (contributorGlow) {
+      contributorGlow.visible =
+        !this.observerView || this.resolvedContributorOpacity > 0.001;
+    }
 
     const observer = this.fixed.getObjectByName("observer");
     if (observer) observer.visible = !this.observerView;
+    const horizon = this.fixed.getObjectByName("observer-celestial-horizon");
+    if (horizon) horizon.visible = !this.observerView;
     this.optical.traverse((object) => {
       if (
         object.name === "sun-disc-and-glow" ||
@@ -685,6 +810,110 @@ export class RainbowOverview {
     }
   }
 
+  private addIntegratedRainbowRadiance(
+    antisolar: THREE.Vector3,
+    first: THREE.Vector3,
+    second: THREE.Vector3
+  ): void {
+    const profile = buildRainbowRadianceProfile(this.order, 144);
+    const radialCount = profile.samples.length;
+    const phaseSegments = 360;
+    const vertexCount = (phaseSegments + 1) * radialCount;
+    const positions = new Float32Array(vertexCount * 3);
+    const colors = new Float32Array(vertexCount * 3);
+    const alphas = new Float32Array(vertexCount);
+    const indices: number[] = [];
+    const origin = opticalOrigin();
+
+    for (let phaseIndex = 0; phaseIndex <= phaseSegments; phaseIndex += 1) {
+      const phase = (phaseIndex / phaseSegments) * Math.PI * 2;
+      const continuity =
+        0.97 +
+        0.018 * Math.sin(phase * 3 + 0.7) +
+        0.012 * Math.sin(phase * 7 - 1.1);
+      for (let radialIndex = 0; radialIndex < radialCount; radialIndex += 1) {
+        const sample = profile.samples[radialIndex];
+        if (!sample) continue;
+        const direction = directionOnCone(
+          antisolar,
+          first,
+          second,
+          radians(sample.radiusDeg),
+          phase
+        );
+        const vertexIndex = phaseIndex * radialCount + radialIndex;
+        const offset = vertexIndex * 3;
+        positions[offset] = origin.x + direction.x * SKY_RADIUS;
+        positions[offset + 1] = origin.y + direction.y * SKY_RADIUS;
+        positions[offset + 2] = origin.z + direction.z * SKY_RADIUS;
+        colors[offset] = sample.r;
+        colors[offset + 1] = sample.g;
+        colors[offset + 2] = sample.b;
+        const horizonVisibility = smoothUnit((direction.y + 0.012) / 0.04);
+        alphas[vertexIndex] = sample.alpha * horizonVisibility * continuity;
+      }
+    }
+
+    for (let phaseIndex = 0; phaseIndex < phaseSegments; phaseIndex += 1) {
+      for (let radialIndex = 0; radialIndex < radialCount - 1; radialIndex += 1) {
+        const topLeft = phaseIndex * radialCount + radialIndex;
+        const topRight = topLeft + 1;
+        const bottomLeft = (phaseIndex + 1) * radialCount + radialIndex;
+        const bottomRight = bottomLeft + 1;
+        indices.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute("radianceAlpha", new THREE.BufferAttribute(alphas, 1));
+    geometry.setIndex(indices);
+    geometry.computeBoundingSphere();
+
+    this.rainbowRadianceMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uOpacity: { value: this.observerView ? this.radianceOpacity : 0 }
+      },
+      vertexShader: `
+        attribute float radianceAlpha;
+        varying vec3 vRadianceColor;
+        varying float vRadianceAlpha;
+
+        void main() {
+          vRadianceColor = color;
+          vRadianceAlpha = radianceAlpha;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uOpacity;
+        varying vec3 vRadianceColor;
+        varying float vRadianceAlpha;
+
+        void main() {
+          float alpha = clamp(vRadianceAlpha * uOpacity, 0.0, 1.0);
+          if (alpha <= 0.001) discard;
+          gl_FragColor = vec4(vRadianceColor, alpha);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `,
+      vertexColors: true,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+      fog: false,
+      toneMapped: true
+    });
+    const bow = new THREE.Mesh(geometry, this.rainbowRadianceMaterial);
+    bow.name = "continuous-relative-radiance-integrated-from-unresolved-rain-field";
+    bow.renderOrder = 3;
+    this.optical.add(bow);
+  }
+
   private addContributorGlints(): void {
     const contributors = this.visibleContributorIndices();
     const positions = new Float32Array(contributors.length * 3);
@@ -710,12 +939,12 @@ export class RainbowOverview {
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     this.contributorGlowMaterial = new THREE.PointsMaterial({
-      size: 11.5,
+      size: 4.8,
       sizeAttenuation: false,
       vertexColors: true,
       map: this.softPointTexture,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0,
       alphaTest: 0.004,
       depthTest: false,
       depthWrite: false,
@@ -723,12 +952,12 @@ export class RainbowOverview {
       blending: THREE.AdditiveBlending
     });
     this.contributorCoreMaterial = new THREE.PointsMaterial({
-      size: 3.8,
+      size: 1.9,
       sizeAttenuation: false,
       vertexColors: true,
       map: this.softPointTexture,
       transparent: true,
-      opacity: 0.98,
+      opacity: 0,
       alphaTest: 0.025,
       depthTest: false,
       depthWrite: false,
