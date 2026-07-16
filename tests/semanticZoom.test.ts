@@ -7,12 +7,10 @@ import {
   RAINBOW_CAMERA_NEAR,
   cameraDistanceFromProgress,
   chapterForProgress,
-  focusDropletDirection,
   progressiveDrawCount,
   progressFromCameraDistance,
   rainbowZoomFrame,
-  semanticSpanM,
-  sunDirectionFromAngles
+  semanticSpanM
 } from "../src/physics/semanticZoom.ts";
 import { RainbowJourney } from "../src/scenes/rainbowJourney.ts";
 
@@ -76,17 +74,6 @@ test("progressive draw count never hides the complete endpoints", () => {
   assert.equal(progressiveDrawCount(1, 0), 0);
 });
 
-test("selected droplet lies on the representative observer-centred rainbow cone", () => {
-  for (const radiusDeg of [41.8, 51.5]) {
-    const sun = sunDirectionFromAngles(12, 225);
-    const axis = { x: -sun.x, y: -sun.y, z: -sun.z };
-    const focus = focusDropletDirection(12, 225, radiusDeg);
-    const dot = axis.x * focus.x + axis.y * focus.y + axis.z * focus.z;
-    const measured = Math.acos(Math.min(1, Math.max(-1, dot))) * 180 / Math.PI;
-    assert.ok(Math.abs(measured - radiusDeg) < 1e-10);
-  }
-});
-
 test("journey uses one optical origin for the eye, sightline, and scattering geometry", () => {
   const journey = new RainbowJourney();
   try {
@@ -102,19 +89,60 @@ test("journey uses one optical origin for the eye, sightline, and scattering geo
 
     for (const order of [1, 2] as const) {
       journey.setConditions(order, 12, 225);
+      assert.ok(journey.selectAdjacentContributor(1));
       const snapshot = journey.getFocusSnapshot();
       const sightline = snapshot.position.clone().sub(OBSERVER_OPTICAL_ORIGIN);
-      assert.ok(
-        Math.abs(sightline.length() - snapshot.illustrativeDistanceModelUnits) < 1e-10
-      );
-
       const expectedOutgoing = sightline.clone().negate().normalize();
       assert.ok(snapshot.outgoingDirection.distanceTo(expectedOutgoing) < 1e-12);
+      assert.equal(snapshot.contributes, true);
+      assert.equal(snapshot.rayReachesObserver, true);
+      assert.ok(snapshot.representativeRayDirection.angleTo(snapshot.outgoingDirection) < 1e-7);
 
       const scatteringDeg = snapshot.incomingDirection.angleTo(snapshot.outgoingDirection) *
         180 / Math.PI;
-      assert.ok(Math.abs(scatteringDeg - (180 - snapshot.rainbowRadiusDeg)) < 1e-10);
+      assert.ok(Math.abs(scatteringDeg - (180 - snapshot.apparentRadiusDeg)) < 2e-6);
+      assert.ok(Math.abs(snapshot.apparentRadiusDeg - snapshot.rainbowRadiusDeg) < 1e-9);
+
+      const field = journey.group.getObjectByName("fixed-rain-field-60000-selectable-droplets");
+      assert.ok(field instanceof THREE.Points);
+      const positions = field.geometry.getAttribute("position");
+      const renderedPosition = new THREE.Vector3().fromBufferAttribute(positions, snapshot.index);
+      assert.ok(renderedPosition.distanceTo(snapshot.position) < 1e-12);
     }
+  } finally {
+    journey.dispose();
+  }
+});
+
+test("zoom never replaces the selected real rain-field ID", () => {
+  const journey = new RainbowJourney();
+  try {
+    const selected = journey.selectAdjacentContributor(1);
+    assert.ok(selected);
+    for (let step = 0; step <= 100; step += 1) {
+      journey.applyZoom(rainbowZoomFrame(step / 100));
+      const snapshot = journey.getFocusSnapshot();
+      assert.equal(snapshot.id, selected.id);
+      assert.equal(snapshot.index, selected.index);
+      assert.ok(snapshot.position.distanceTo(selected.position) < 1e-12);
+    }
+  } finally {
+    journey.dispose();
+  }
+});
+
+test("a selected non-contributor keeps its ID but does not connect a rainbow ray to the eye", () => {
+  const journey = new RainbowJourney();
+  try {
+    let nonContributor = null as ReturnType<RainbowJourney["selectById"]>;
+    for (let index = 0; index < 200 && !nonContributor; index += 1) {
+      const candidate = journey.selectById(`drop-${index.toString().padStart(6, "0")}`);
+      if (candidate && !candidate.contributes) nonContributor = candidate;
+    }
+    assert.ok(nonContributor, "the fixed field should expose selectable non-contributors");
+    assert.equal(nonContributor.rayReachesObserver, false);
+    assert.ok(nonContributor.representativeRayDirection.angleTo(nonContributor.outgoingDirection) > 1e-4);
+    assert.equal(journey.getFocusSnapshot().id, nonContributor.id);
   } finally {
     journey.dispose();
   }

@@ -37,7 +37,7 @@ export const RAINBOW_CHAPTER_LABELS: Readonly<Record<RainbowZoomChapter, string>
   overview: "虹の全景",
   contributor: "寄与する水滴へ接近",
   droplet: "同じ水滴を拡大",
-  ray: "代表光線 530 nm",
+  ray: "選択滴の1本の光路",
   dispersion: "波長差と部分反射"
 };
 
@@ -108,10 +108,9 @@ export function rainbowZoomFrame(progress: number): RainbowZoomFrame {
     progress: value,
     chapter: chapterForProgress(value),
     semanticSpanM: semanticSpanM(value),
-    targetBlend: smoothstep(0.06, 0.62, value),
-    overviewOpacity: 1 - smoothstep(0.42, 0.72, value),
-    focusMarkerOpacity:
-      smoothstep(0.08, 0.24, value) * (1 - smoothstep(0.52, 0.72, value)),
+    targetBlend: smoothstep(0.06, 0.6, value),
+    overviewOpacity: 1 - smoothstep(0.72, 0.9, value),
+    focusMarkerOpacity: 0.9 * (1 - smoothstep(0.62, 0.84, value)),
     detailScale,
     surfaceOpacity: smoothstep(0.3, 0.56, value),
     representativeRayOpacity: smoothstep(0.62, 0.74, value),
@@ -132,40 +131,5 @@ export function sunDirectionFromAngles(
     x: Math.cos(elevation) * Math.sin(azimuth),
     y: Math.sin(elevation),
     z: Math.cos(elevation) * Math.cos(azimuth)
-  };
-}
-
-export function focusDropletDirection(
-  sunElevationDeg: number,
-  sunAzimuthDeg: number,
-  rainbowRadiusDeg: number
-): Vec3Like {
-  const sun = sunDirectionFromAngles(sunElevationDeg, sunAzimuthDeg);
-  const axis = { x: -sun.x, y: -sun.y, z: -sun.z };
-  const upDot = axis.y;
-  const projectedUp = {
-    x: -axis.x * upDot,
-    y: 1 - axis.y * upDot,
-    z: -axis.z * upDot
-  };
-  const projectedLength = Math.hypot(projectedUp.x, projectedUp.y, projectedUp.z);
-  const top = projectedLength > 1e-9
-    ? {
-        x: projectedUp.x / projectedLength,
-        y: projectedUp.y / projectedLength,
-        z: projectedUp.z / projectedLength
-      }
-    : { x: 1, y: 0, z: 0 };
-  const radius = (rainbowRadiusDeg * Math.PI) / 180;
-  const direction = {
-    x: axis.x * Math.cos(radius) + top.x * Math.sin(radius),
-    y: axis.y * Math.cos(radius) + top.y * Math.sin(radius),
-    z: axis.z * Math.cos(radius) + top.z * Math.sin(radius)
-  };
-  const length = Math.hypot(direction.x, direction.y, direction.z);
-  return {
-    x: direction.x / length,
-    y: direction.y / length,
-    z: direction.z / length
   };
 }

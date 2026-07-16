@@ -377,6 +377,78 @@ input[type="range"]:disabled {
   line-height: 1.45;
 }
 
+.drop-selection-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin: 9px 0 6px;
+}
+
+.drop-selection-actions button,
+.drop-id-actions button,
+.mobile-drop-dock button {
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: #102329;
+  cursor: pointer;
+}
+
+.drop-id-actions {
+  display: grid;
+  gap: 5px;
+  margin: 7px 0;
+}
+
+.drop-id-actions > label {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.drop-id-actions > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+}
+
+.drop-id-actions input {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  padding: 0 8px;
+  color: var(--text);
+  background: #071519;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.drop-id-actions > span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.drop-id-actions > button {
+  min-height: 38px;
+}
+
+.drop-id-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.operation-card .selected-drop-readout {
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 7px;
+  border-left: 2px solid var(--cyan);
+  color: #cde7e9;
+  background: #0b191e;
+  font-variant-numeric: tabular-nums;
+}
+
 .semantic-zoom-control {
   display: block;
   margin: 10px 0 8px;
@@ -421,6 +493,20 @@ input[type="range"]:disabled {
 }
 
 .mobile-zoom-dock {
+  display: none;
+}
+
+.mobile-drop-dock {
+  display: none;
+}
+
+.mobile-drop-id-dock {
+  display: none;
+}
+
+.drop-selection-actions[hidden],
+.mobile-drop-dock[hidden],
+.mobile-drop-id-dock[hidden] {
   display: none;
 }
 
@@ -755,9 +841,12 @@ input[type="range"]:disabled {
 
   .scene-panel {
     order: 1;
+    width: 100%;
+    max-width: 100%;
     min-height: 0;
-    grid-template-rows: auto auto 320px auto;
+    grid-template-rows: auto auto auto auto 320px auto;
     padding: 8px;
+    overflow: hidden;
   }
 
   .scene-stage {
@@ -797,6 +886,55 @@ input[type="range"]:disabled {
     color: var(--cyan);
     font-variant-numeric: tabular-nums;
     font-weight: 700;
+  }
+
+  .mobile-drop-dock {
+    display: grid;
+    grid-template-columns: 66px minmax(0, 1fr) 66px;
+    align-items: center;
+    gap: 7px;
+    padding: 0 0 7px;
+  }
+
+  .mobile-drop-dock span {
+    min-width: 0;
+    color: #b9ced1;
+    font-size: 0.64rem;
+    line-height: 1.3;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-drop-id-dock {
+    display: grid;
+    width: 100%;
+    max-width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 0 0 7px;
+  }
+
+  .mobile-drop-id-dock input,
+  .mobile-drop-id-dock button {
+    min-width: 0;
+    min-height: 44px;
+    border: 1px solid var(--line-strong);
+    border-radius: 5px;
+    color: var(--text);
+    background: #0a191e;
+    font: inherit;
+  }
+
+  .mobile-drop-id-dock input {
+    padding: 0 9px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mobile-drop-id-dock button {
+    padding: 0 12px;
+    background: #12242a;
   }
 
   .control-panel {
@@ -853,7 +991,7 @@ input[type="range"]:disabled {
 
   .scene-panel {
     min-height: 0;
-    grid-template-rows: auto auto 180px auto;
+    grid-template-rows: auto auto auto auto 180px auto;
   }
 
   .scene-heading {
@@ -876,6 +1014,16 @@ input[type="range"]:disabled {
     gap: 6px;
   }
 
+  .brand-block {
+    max-width: calc(100% - 92px);
+  }
+
+  .eyebrow {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .title-line {
     gap: 5px;
   }
@@ -889,7 +1037,13 @@ input[type="range"]:disabled {
   }
 
   .top-actions .button {
+    min-height: 40px;
     padding-inline: 8px;
+    font-size: 0.68rem;
+  }
+
+  .top-actions a.button {
+    display: none;
   }
 
   .scene-heading {
@@ -906,16 +1060,19 @@ input[type="range"]:disabled {
 
   .scale-readout {
     max-width: none;
+    overflow: hidden;
   }
 
   .scale-readout strong {
     display: block;
     font-size: 0.67rem;
     line-height: 1.3;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .scene-panel {
-    grid-template-rows: auto auto 300px auto;
+    grid-template-rows: auto auto auto auto 300px auto;
   }
 
   .canvas-overlay {

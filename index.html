@@ -29,7 +29,7 @@
             <h1>大気光学3Dラボ</h1>
             <span class="status-chip">開発中 β</span>
           </div>
-          <p class="lede">見える角度と、1粒の中の光路を同じ計算でつなぐ。</p>
+          <p class="lede">大量の雨滴から選んだ実在IDを、1粒の光路まで追う。</p>
         </div>
         <div class="top-actions" aria-label="表示操作">
           <button id="reset-view" class="button button-quiet" type="button">視点を戻す</button>
@@ -120,7 +120,30 @@
 
           <div class="operation-card">
             <strong>3D操作</strong>
-            <p>ドラッグで360°回転・ホイール／タッチ画面の2本指ピンチで連続ズーム</p>
+            <p>ドラッグで360°回転。色付き・灰色を問わず、雨滴をクリック／短くタップするとその実在IDを選択できます。</p>
+            <div id="drop-selection-actions" class="drop-selection-actions" aria-label="虹に寄与する水滴を順に選択">
+              <button id="previous-contributor" type="button">← 前の寄与滴</button>
+              <button id="next-contributor" type="button">次の寄与滴 →</button>
+            </div>
+            <div id="drop-id-actions" class="drop-id-actions" aria-label="雨滴IDを直接選択">
+              <label for="drop-id-input">全60,000滴からID指定</label>
+              <div>
+                <input
+                  id="drop-id-input"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="off"
+                  spellcheck="false"
+                  maxlength="11"
+                  placeholder="例 33494"
+                  aria-describedby="drop-id-help"
+                />
+                <button id="select-drop-id" type="button">選択</button>
+              </div>
+              <span id="drop-id-help">0〜59999、または drop-000000 形式。描画密度の外にある滴も同じ固定雨域から呼び出せます。</span>
+              <button id="next-overlap-candidate" type="button" disabled>同じ場所の次の候補</button>
+            </div>
+            <p id="selected-drop-readout" class="selected-drop-readout">選択中の雨滴を読み込み中</p>
             <label class="slider-control semantic-zoom-control" for="semantic-zoom">
               <span class="slider-label">
                 <span id="semantic-zoom-label">虹から光路まで</span><output id="semantic-zoom-value">虹の全景 0%</output>
@@ -138,7 +161,7 @@
             </label>
             <div class="zoom-actions" aria-label="ズーム操作">
               <button id="zoom-out" type="button" aria-label="虹の全景側へ縮小">−</button>
-              <button id="focus-particle" type="button">代表光線まで</button>
+              <button id="focus-particle" type="button">この水滴へ</button>
               <button id="zoom-in" type="button" aria-label="水滴の光路側へ拡大">＋</button>
             </div>
             <p id="zoom-status" class="sr-only" aria-live="polite" aria-atomic="true">虹の全景です。</p>
@@ -153,7 +176,7 @@
             </div>
             <div class="scale-readout">
               <span>表示スケール</span>
-              <strong id="scale-readout">意味スケール指標 約300 m相当 / 水滴径 2.0 mm模型</strong>
+              <strong id="scale-readout">意味スケール指標 約300 m相当 / 選択滴径 0.45–1.00 mm</strong>
             </div>
           </div>
           <div class="mobile-zoom-dock" aria-label="連続ズーム操作">
@@ -172,11 +195,29 @@
             </label>
             <button id="mobile-zoom-in" type="button" aria-label="水滴の光路側へ拡大">＋</button>
           </div>
+          <div id="mobile-drop-dock" class="mobile-drop-dock" aria-label="虹に寄与する水滴を選択">
+            <button id="mobile-previous-contributor" type="button" aria-label="前の寄与滴を選択">← 前</button>
+            <span id="mobile-selected-drop">雨滴を選択</span>
+            <button id="mobile-next-contributor" type="button" aria-label="次の寄与滴を選択">次 →</button>
+          </div>
+          <div id="mobile-drop-id-dock" class="mobile-drop-id-dock" aria-label="全雨滴からIDを指定">
+            <input
+              id="mobile-drop-id-input"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="11"
+              placeholder="雨滴ID 0〜59999"
+              aria-label="モバイル雨滴ID"
+            />
+            <button id="mobile-select-drop-id" type="button">このIDへ</button>
+          </div>
           <div id="scene-stage" class="scene-stage">
             <canvas
               id="optics-canvas"
               tabindex="0"
-              aria-label="虹とハロを観察する3Dシミュレーション。矢印キーで回転、プラスとマイナスで連続ズーム、Homeで全景、Endで光路へ移動できます。"
+              aria-label="虹とハロを観察する3Dシミュレーション。雨滴をクリックまたは短くタップして選択。矢印キーで回転、プラスとマイナスで連続ズーム、Homeで全景、Endで光路へ移動できます。"
               aria-describedby="semantic-note"
             ></canvas>
             <div class="canvas-overlay canvas-overlay-top">
@@ -193,7 +234,7 @@
             </div>
           </div>
           <p id="semantic-note" class="semantic-note">
-            約300 m相当から水滴内部までを見失わず学ぶ対数的な「意味ズーム」です。同じ代表水滴を追跡しながら局所模型へ連続に再正規化します。数値はカメラ画角や画面寸法から校正した実測縮尺ではありません。
+            60,000滴の代表標本から選んだ同じIDを、水滴内部まで追う対数的な「意味ズーム」です。実際の雨滴数・降水量や画面上の実測縮尺を示すものではありません。
           </p>
         </section>
 
@@ -249,6 +290,8 @@
       <footer class="footer-bar">
         <p>
           出典・基礎：<a href="https://glossary.ametsoc.org/wiki/rainbow/" rel="noreferrer">AMS Glossary: rainbow</a> ／
+          <a href="https://doi.org/10.1175/BAMS-D-20-0101.1" rel="noreferrer">Businger: observer-centred rainbow cone</a> ／
+          <a href="https://doi.org/10.1145/2077341.2077344" rel="noreferrer">Sadeghi et al.: physically based rainbows</a> ／
           <a href="https://iapws.org/documents/release/Rindex.download" rel="noreferrer">IAPWS R9-97 水の屈折率</a> ／
           <a href="https://www.sciencedirect.com/science/article/abs/pii/S037015730100076X" rel="noreferrer">Adam: The mathematical physics of rainbows and glories</a> ／
           <a href="https://cloudatlas.wmo.int/en/halo-phenomena.html" rel="noreferrer">WMO Cloud Atlas: halo</a>

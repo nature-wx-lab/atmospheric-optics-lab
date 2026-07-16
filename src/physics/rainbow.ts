@@ -60,8 +60,6 @@ export const SPECTRAL_SAMPLES: readonly SpectralSample[] = [
 export const degrees = (radians: number): number => (radians * 180) / Math.PI;
 export const radians = (degreesValue: number): number => (degreesValue * Math.PI) / 180;
 
-const stationaryRayCache = new Map<string, StationaryRay>();
-
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value));
 
@@ -158,9 +156,6 @@ export function findStationaryRay(
   order: RainbowOrder
 ): StationaryRay {
   if (!(refractiveIndex > 1)) throw new RangeError("refractive index must be greater than 1");
-  const cacheKey = `${order}:${refractiveIndex}`;
-  const cached = stationaryRayCache.get(cacheKey);
-  if (cached) return cached;
 
   // dD/di = 0 gives cos²(i) = (n² - 1) / (k(k + 2)), where k is
   // the number of internal reflections. This is the rainbow caustic ray.
@@ -172,7 +167,7 @@ export function findStationaryRay(
   const incidence = Math.acos(Math.sqrt(cosineSquared));
   const refraction = Math.asin(Math.sin(incidence) / refractiveIndex);
   const radius = rainbowRadiusRadians(refractiveIndex, order, incidence);
-  const result = Object.freeze({
+  return Object.freeze({
     order,
     internalReflections: order,
     refractiveIndex,
@@ -182,8 +177,6 @@ export function findStationaryRay(
     scatteringDeg: 180 - degrees(radius),
     impactParameter: Math.sin(incidence)
   });
-  stationaryRayCache.set(cacheKey, result);
-  return result;
 }
 
 function nextCircleIntersection(point: Vec2, direction: Vec2): Vec2 {
