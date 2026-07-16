@@ -45,6 +45,8 @@ export const SPECTRAL_SAMPLES: readonly SpectralSample[] = [
 export const degrees = (radians: number): number => (radians * 180) / Math.PI;
 export const radians = (degreesValue: number): number => (degreesValue * Math.PI) / 180;
 
+const stationaryRayCache = new Map<string, StationaryRay>();
+
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value));
 
@@ -95,6 +97,9 @@ export function findStationaryRay(
   order: RainbowOrder
 ): StationaryRay {
   if (!(refractiveIndex > 1)) throw new RangeError("refractive index must be greater than 1");
+  const cacheKey = `${order}:${refractiveIndex}`;
+  const cached = stationaryRayCache.get(cacheKey);
+  if (cached) return cached;
 
   const epsilon = 1e-7;
   const samples = 12_000;
@@ -126,7 +131,7 @@ export function findStationaryRay(
   const incidence = (lower + upper) / 2;
   const refraction = Math.asin(Math.sin(incidence) / refractiveIndex);
   const radius = rainbowRadiusRadians(refractiveIndex, order, incidence);
-  return {
+  const result = Object.freeze({
     order,
     internalReflections: order,
     refractiveIndex,
@@ -135,7 +140,9 @@ export function findStationaryRay(
     radiusDeg: degrees(radius),
     scatteringDeg: 180 - degrees(radius),
     impactParameter: Math.sin(incidence)
-  };
+  });
+  stationaryRayCache.set(cacheKey, result);
+  return result;
 }
 
 function nextCircleIntersection(point: Vec2, direction: Vec2): Vec2 {

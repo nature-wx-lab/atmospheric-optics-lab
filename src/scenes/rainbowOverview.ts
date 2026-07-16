@@ -249,7 +249,10 @@ export class RainbowOverview {
     first: THREE.Vector3,
     second: THREE.Vector3
   ): void {
-    const random = seededRandom(0x7a11ce + this.order * 301 + this.sunElevation * 17 + this.sunAzimuth);
+    // Keep the representative field stable while the Sun moves; only the
+    // observer-centred geometry rotates. The chase experiment uses its own
+    // fixed world positions and IDs for quantitative comparisons.
+    const random = seededRandom(0x7a11ce + this.order * 301);
     const positions = new Float32Array(PARTICLE_CAPACITY * 3);
     const colors = new Float32Array(PARTICLE_CAPACITY * 3);
     const spectralRadii = SPECTRAL_SAMPLES.map((sample) => ({

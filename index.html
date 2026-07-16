@@ -2,6 +2,11 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; media-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex,nofollow,noarchive" />
     <meta name="theme-color" content="#071014" />
@@ -32,15 +37,18 @@
         </div>
       </header>
 
-      <nav class="mode-tabs" aria-label="観察スケール">
+      <nav class="mode-tabs" aria-label="観察モード">
         <button class="mode-tab is-active" type="button" data-view="overview" aria-pressed="true">
-          <span>01</span> 無数の水滴
+          <span>01</span> 虹の全景
+        </button>
+        <button class="mode-tab" type="button" data-view="chase" aria-pressed="false">
+          <span>02</span> 虹を追う
         </button>
         <button class="mode-tab" type="button" data-view="droplet" aria-pressed="false">
-          <span>02</span> 1粒の水滴
+          <span>03</span> 水滴1粒
         </button>
-        <button class="mode-tab" type="button" data-view="halo" aria-pressed="false" disabled>
-          <span>03</span> 氷晶とハロ <small>公開後に増築</small>
+        <button class="mode-tab" type="button" data-view="halo" aria-pressed="false">
+          <span>04</span> 氷晶とハロ
         </button>
       </nav>
 
@@ -51,7 +59,7 @@
             <h2 id="control-title">光と観察条件</h2>
           </div>
 
-          <fieldset class="control-group">
+          <fieldset id="order-controls" class="control-group">
             <legend>虹の光路</legend>
             <div class="segment" role="group" aria-label="虹の次数">
               <button class="segment-button is-active" type="button" data-order="1" aria-pressed="true">一次虹</button>
@@ -60,28 +68,56 @@
             <p id="reflection-note" class="control-note">水滴内で1回反射。赤が外側、紫が内側。</p>
           </fieldset>
 
-          <label class="slider-control" for="sun-elevation">
+          <label id="elevation-control" class="slider-control" for="sun-elevation">
             <span class="slider-label"><span>太陽高度</span><output id="sun-elevation-value">12°</output></span>
-            <input id="sun-elevation" type="range" min="0" max="55" step="1" value="12" />
+            <input id="sun-elevation" type="range" min="0" max="80" step="1" value="12" aria-valuetext="12度" />
           </label>
 
-          <label class="slider-control" for="sun-azimuth">
+          <label id="azimuth-control" class="slider-control" for="sun-azimuth">
             <span class="slider-label"><span>太陽の方位</span><output id="sun-azimuth-value">225°</output></span>
-            <input id="sun-azimuth" type="range" min="0" max="359" step="1" value="225" />
+            <input id="sun-azimuth" type="range" min="0" max="359" step="1" value="225" aria-valuetext="225度" />
           </label>
 
-          <label class="slider-control" for="particle-density">
+          <label id="density-control" class="slider-control" for="particle-density">
             <span class="slider-label"><span>雨滴の見える密度</span><output id="particle-density-value">70%</output></span>
-            <input id="particle-density" type="range" min="15" max="100" step="5" value="70" />
+            <input id="particle-density" type="range" min="15" max="100" step="5" value="70" aria-valuetext="70パーセント" />
             <span class="control-note">描画密度だけを変え、角度の計算値は変えません。</span>
           </label>
+
+          <section id="chase-controls" class="view-controls" aria-labelledby="chase-control-title" hidden>
+            <h3 id="chase-control-title">虹を追う数値実験</h3>
+            <p class="control-note chase-fixed-note">太陽は高度12°・方位225°に固定し、観察者だけを動かします。</p>
+            <label class="slider-control" for="observer-distance">
+              <span class="slider-label">
+                <span>観察者の移動</span><output id="observer-distance-value">0 m</output>
+              </span>
+              <input id="observer-distance" type="range" min="0" max="500" step="10" value="0" aria-valuetext="0メートル" />
+              <span class="control-note">同じ雨域モデル内を反太陽方向へ移動します。</span>
+            </label>
+          </section>
+
+          <section id="halo-controls" class="view-controls" aria-labelledby="halo-control-title" hidden>
+            <h3 id="halo-control-title">ハロの種類</h3>
+            <label class="select-control" for="halo-type">
+              <span>表示する現象</span>
+              <select id="halo-type">
+                <option value="halo-22">22°ハロ</option>
+                <option value="halo-46">46°ハロ</option>
+                <option value="sundog">幻日</option>
+                <option value="circumzenithal-arc">環天頂アーク</option>
+                <option value="upper-tangent-arc">上部タンジェントアーク</option>
+                <option value="circumhorizontal-arc">環水平アーク</option>
+              </select>
+            </label>
+            <p id="halo-model-note" class="control-note">ランダムな向きの六角柱氷晶がつくる円形のハロ。</p>
+          </section>
 
           <div class="operation-card">
             <strong>3D操作</strong>
             <p>ドラッグで360°回転・ホイール／ピンチで拡大縮小</p>
             <div class="zoom-actions" aria-label="ズーム操作">
               <button id="zoom-out" type="button" aria-label="縮小">−</button>
-              <button id="focus-particle" type="button">1粒へ寄る</button>
+              <button id="focus-particle" type="button">水滴1粒へ</button>
               <button id="zoom-in" type="button" aria-label="拡大">＋</button>
             </div>
           </div>
@@ -99,7 +135,12 @@
             </div>
           </div>
           <div id="scene-stage" class="scene-stage">
-            <canvas id="optics-canvas" aria-label="虹を観察する3Dシミュレーション"></canvas>
+            <canvas
+              id="optics-canvas"
+              tabindex="0"
+              aria-label="虹とハロを観察する3Dシミュレーション。矢印キーで視点を回転できます。"
+              aria-describedby="semantic-note"
+            ></canvas>
             <div class="canvas-overlay canvas-overlay-top">
               <span id="view-state">観察者を中心にした虹の円錐</span>
               <span id="fps-state">WebGL 2</span>
@@ -113,7 +154,7 @@
               <p>下の数値は引き続き確認できます。WebGL 2対応ブラウザで再度お試しください。</p>
             </div>
           </div>
-          <p class="semantic-note">
+          <p id="semantic-note" class="semantic-note">
             kmからmmまでを見失わず学ぶための「意味的ズーム」です。表示模型は段階ごとに正規化し、角度と屈折率は同じ物理計算を使います。
           </p>
         </section>
@@ -131,10 +172,10 @@
           </section>
 
           <dl class="fact-grid">
-            <div><dt>中心</dt><dd id="center-value">観察者の反太陽点</dd></div>
-            <div><dt>内部反射</dt><dd id="reflection-value">1回</dd></div>
-            <div><dt>赤 656.3 nm</dt><dd id="red-angle-value">42.4°</dd></div>
-            <div><dt>紫 404.7 nm</dt><dd id="violet-angle-value">40.7°</dd></div>
+            <div><dt id="fact-1-label">中心</dt><dd id="center-value">観察者の反太陽点</dd></div>
+            <div><dt id="fact-2-label">内部反射</dt><dd id="reflection-value">1回</dd></div>
+            <div><dt id="fact-3-label">赤 656.3 nm</dt><dd id="red-angle-value">42.4°</dd></div>
+            <div><dt id="fact-4-label">紫 404.7 nm</dt><dd id="violet-angle-value">40.7°</dd></div>
           </dl>
 
           <section class="explanation-card">
@@ -144,13 +185,24 @@
             </p>
           </section>
 
+          <section id="chase-data" class="experiment-data" aria-labelledby="chase-data-title" hidden>
+            <h3 id="chase-data-title">移動前後の計算データ</h3>
+            <dl>
+              <div><dt>観察者</dt><dd id="chase-position-value">0 m</dd></div>
+              <div><dt>虹の角半径</dt><dd id="chase-angle-value">42.1°</dd></div>
+              <div><dt>寄与する水滴</dt><dd id="chase-droplet-value">—</dd></div>
+              <div><dt>開始時と共通</dt><dd id="chase-overlap-value">—</dd></div>
+            </dl>
+            <p id="chase-distance-note">角度だけから虹までの距離は決まりません。</p>
+          </section>
+
           <details class="model-details">
             <summary>計算モデルと限界</summary>
-            <ul>
-              <li>球形水滴・幾何光学・空気の屈折率を1とする近似です。</li>
-              <li>代表波長404.7–656.3 nmの水の分散を使います。</li>
-              <li>波動光学が必要な過剰虹や強度分布は、現βでは扱いません。</li>
-              <li>雨滴の描画密度は理解用で、実際の降水量ではありません。</li>
+            <ul id="model-list">
+              <li id="model-1">球形水滴・幾何光学・空気の屈折率を1とする近似です。</li>
+              <li id="model-2">代表波長404.7–656.3 nmの水の分散を使います。</li>
+              <li id="model-3">波動光学が必要な過剰虹や強度分布は、現βでは扱いません。</li>
+              <li id="model-4">雨滴の描画密度は理解用で、実際の降水量ではありません。</li>
             </ul>
           </details>
         </aside>
@@ -159,7 +211,8 @@
       <footer class="footer-bar">
         <p>
           出典・基礎：<a href="https://glossary.ametsoc.org/wiki/rainbow/" rel="noreferrer">AMS Glossary: rainbow</a> ／
-          <a href="https://mail.iapws.org/relguide/Rindex.html" rel="noreferrer">IAPWS R9-97 水の屈折率</a>
+          <a href="https://iapws.org/documents/release/Rindex.download" rel="noreferrer">IAPWS R9-97 水の屈折率</a> ／
+          <a href="https://cloudatlas.wmo.int/en/halo-phenomena.html" rel="noreferrer">WMO Cloud Atlas: halo</a>
         </p>
         <p>教育用β。安全・防災上の判断には使用せず、太陽を直接見ないでください。</p>
       </footer>

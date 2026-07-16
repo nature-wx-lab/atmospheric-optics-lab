@@ -158,7 +158,7 @@ h1 {
 }
 
 .mode-tab {
-  min-width: 160px;
+  min-width: 142px;
   padding: 8px 13px;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -272,6 +272,50 @@ h1 {
 .slider-control {
   display: block;
   margin-bottom: 16px;
+}
+
+.view-controls {
+  margin: 0 0 16px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #081115;
+}
+
+.view-controls[hidden] {
+  display: none;
+}
+
+.view-controls h3 {
+  margin: 0 0 9px;
+  color: #dce9eb;
+  font-size: 0.76rem;
+}
+
+.view-controls .slider-control {
+  margin-bottom: 0;
+}
+
+.view-controls .chase-fixed-note {
+  margin: 0 0 9px;
+}
+
+.select-control {
+  display: grid;
+  gap: 6px;
+  color: #cbdadc;
+  font-size: 0.72rem;
+}
+
+.select-control select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: #102126;
+  cursor: pointer;
 }
 
 .slider-label {
@@ -521,6 +565,57 @@ input[type="range"] {
   line-height: 1.58;
 }
 
+.experiment-data {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #35535b;
+  border-radius: 6px;
+  background: #0b191e;
+}
+
+.experiment-data[hidden] {
+  display: none;
+}
+
+.experiment-data h3 {
+  margin: 0 0 8px;
+  color: #dffafb;
+  font-size: 0.74rem;
+}
+
+.experiment-data dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0;
+  background: var(--line);
+}
+
+.experiment-data dl div {
+  min-width: 0;
+  padding: 7px;
+  background: #091317;
+}
+
+.experiment-data dt {
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.experiment-data dd {
+  margin: 2px 0 0;
+  color: #eefafa;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.experiment-data p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
 .model-details {
   border-top: 1px solid var(--line);
   padding-top: 9px;
@@ -574,7 +669,7 @@ input[type="range"] {
   }
 }
 
-@media (max-width: 840px) {
+@media (max-width: 920px) {
   body {
     overflow-y: auto;
   }
