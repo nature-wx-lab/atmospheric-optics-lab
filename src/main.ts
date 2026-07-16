@@ -199,6 +199,7 @@ function setCameraDistance(multiplier: number): void {
       RAINBOW_CAMERA_FAR
     );
     applyRainbowProgress(progressFromCameraDistance(distance));
+    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
     return;
   }
   const offset = camera.position.clone().sub(controls.target);
@@ -223,6 +224,13 @@ function setActiveTab(view: ViewName, scrollIntoView = false): void {
 
 function rainbowTabForChapter(chapter: RainbowZoomChapter): "overview" | "droplet" {
   return chapter === "overview" || chapter === "contributor" ? "overview" : "droplet";
+}
+
+function announceRainbowProgress(frame: RainbowZoomFrame): void {
+  setText(
+    "#zoom-status",
+    `${RAINBOW_CHAPTER_LABELS[frame.chapter]}。意味ズーム${Math.round(frame.progress * 100)}パーセント、意味スケール指標は約${formatSemanticSpan(frame.semanticSpanM)}相当です。`
+  );
 }
 
 function updateRainbowProgressUi(frame: RainbowZoomFrame): void {
@@ -256,10 +264,7 @@ function updateRainbowProgressUi(frame: RainbowZoomFrame): void {
     setActiveTab(state.view);
     renderControlVisibility();
     updateRainbowExplanation(frame);
-    setText(
-      "#zoom-status",
-      `${RAINBOW_CHAPTER_LABELS[frame.chapter]}。意味スケール指標は約${formatSemanticSpan(frame.semanticSpanM)}相当です。`
-    );
+    announceRainbowProgress(frame);
   }
   updateCameraReadout();
 }
@@ -304,6 +309,7 @@ function animateRainbowProgress(targetProgress: number): void {
   const difference = target - start;
   if (Math.abs(difference) < 1e-4 || prefersReducedMotion.matches) {
     applyRainbowProgress(target);
+    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
     return;
   }
   const startedAt = performance.now();
@@ -313,7 +319,10 @@ function animateRainbowProgress(targetProgress: number): void {
     const eased = unit * unit * (3 - 2 * unit);
     applyRainbowProgress(start + difference * eased);
     if (unit < 1) rainbowAnimationFrame = requestAnimationFrame(step);
-    else rainbowAnimationFrame = 0;
+    else {
+      rainbowAnimationFrame = 0;
+      announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
+    }
   };
   rainbowAnimationFrame = requestAnimationFrame(step);
 }
@@ -852,11 +861,7 @@ for (const input of [semanticZoomInput, mobileSemanticZoomInput]) {
     applyRainbowProgress(Number(input.value) / 1_000);
   });
   input.addEventListener("change", () => {
-    const frame = rainbowZoomFrame(state.rainbowZoom);
-    setText(
-      "#zoom-status",
-      `${RAINBOW_CHAPTER_LABELS[frame.chapter]}。意味ズーム${Math.round(frame.progress * 100)}パーセントです。`
-    );
+    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
   });
 }
 requireElement<HTMLButtonElement>("#mobile-zoom-in").addEventListener("click", () =>
@@ -904,9 +909,11 @@ canvas.addEventListener("keydown", (event) => {
   else if (event.key === "PageUp" && isRainbowView(state.view)) {
     cancelRainbowAnimation();
     applyRainbowProgress(state.rainbowZoom + 0.12);
+    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
   } else if (event.key === "PageDown" && isRainbowView(state.view)) {
     cancelRainbowAnimation();
     applyRainbowProgress(state.rainbowZoom - 0.12);
+    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
   } else if (event.key === "Home" && isRainbowView(state.view)) animateRainbowProgress(0);
   else if (event.key === "End" && isRainbowView(state.view)) animateRainbowProgress(1);
   else if (event.key === "Home") resetCamera();
