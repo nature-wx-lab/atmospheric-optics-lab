@@ -1,0 +1,27 @@
+{
+  "name": "atmospheric-optics-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "tsx --test tests/*.test.ts",
+    "verify": "pnpm test && pnpm build && node scripts/verify-build.mjs && python3 scripts/privacy_gate.py --skip-history"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "@types/three": "0.185.1",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2",
+    "vite": "8.1.4"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0"
+}
