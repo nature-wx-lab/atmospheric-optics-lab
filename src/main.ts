@@ -639,14 +639,24 @@ canvas.addEventListener("keydown", (event) => {
   event.preventDefault();
 });
 
+let resizeFrame = 0;
+let renderedWidth = 0;
+let renderedHeight = 0;
 const resizeObserver = new ResizeObserver(() => {
-  if (!renderer) return;
-  const width = Math.max(1, stage.clientWidth);
-  const height = Math.max(1, stage.clientHeight);
-  renderer.setSize(width, height, false);
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
-  requestRender();
+  if (!renderer || resizeFrame) return;
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0;
+    if (!renderer) return;
+    const width = Math.max(1, Math.round(stage.clientWidth));
+    const height = Math.max(1, Math.round(stage.clientHeight));
+    if (width === renderedWidth && height === renderedHeight) return;
+    renderedWidth = width;
+    renderedHeight = height;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    requestRender();
+  });
 });
 resizeObserver.observe(stage);
 
@@ -673,6 +683,7 @@ function disposeApp(): void {
   if (disposed) return;
   disposed = true;
   resizeObserver.disconnect();
+  cancelAnimationFrame(resizeFrame);
   cancelAnimationFrame(renderFrame);
   cancelAnimationFrame(pendingChaseFrame);
   window.clearTimeout(semanticWheelTimer);
