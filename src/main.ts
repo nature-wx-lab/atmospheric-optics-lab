@@ -20,6 +20,10 @@ import {
 } from "./physics/rainbow";
 import { RainbowSelectionGesture } from "./interaction/rainbowSelectionGesture";
 import {
+  rainbowBandAtViewDirection,
+  viewDirectionFromCanvasPoint
+} from "./interaction/rainbowCursorTarget";
+import {
   resolveRainbowZoomAction,
   type RainbowMode,
   zoomAmountFromButtonMultiplier,
@@ -44,6 +48,7 @@ import {
   fieldInspectionTravelM,
   formatSemanticSpan,
   rainbowZoomFrame,
+  sunDirectionFromAngles,
   type RainbowZoomChapter,
   type RainbowZoomFrame
 } from "./physics/semanticZoom";
@@ -55,6 +60,7 @@ import { boundedHorizontalObserverMove } from "./physics/observerMovement";
 import { ChaseExperiment } from "./scenes/chaseExperiment";
 import { HaloOverview } from "./scenes/haloOverview";
 import { RainbowJourney, type FocusDropletSnapshot } from "./scenes/rainbowJourney";
+import { RAINBOW_SKY_RADIUS } from "./scenes/rainbowOverview";
 
 type ViewName = "overview" | "chase" | "droplet" | "halo";
 
@@ -96,6 +102,22 @@ function setHidden(selector: string, hidden: boolean): void {
 
 function normalizedDegrees(value: number): number {
   return ((value % 360) + 360) % 360;
+}
+
+function setRainbowOrderValue(order: RainbowOrder): void {
+  state.order = order;
+  document.querySelectorAll<HTMLButtonElement>(".segment-button[data-order]").forEach(
+    (button) => {
+      const active = Number(button.dataset.order) === order;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+  );
+  chaseBaseline = new RainbowChaseModel({
+    order,
+    sunElevationDeg: CHASE_SUN_ELEVATION,
+    sunAzimuthDeg: CHASE_SUN_AZIMUTH
+  }).snapshot(0);
 }
 
 function formatCount(value: number): string {
@@ -201,6 +223,13 @@ try {
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x020507);
 scene.fog = new THREE.FogExp2(0x020507, 0.013);
+
+function updateSceneAtmosphere(): void {
+  const outsideRainbow = isRainbowView(state.view) && rainbowMode === "external";
+  const color = outsideRainbow ? 0x526f7d : 0x020507;
+  scene.background = new THREE.Color(color);
+  scene.fog = new THREE.FogExp2(color, outsideRainbow ? 0.021 : 0.013);
+}
 
 const camera = new THREE.PerspectiveCamera(46, 1, 0.03, 250);
 camera.position.set(18, 10, 24);
@@ -372,12 +401,12 @@ function syncRainbowDropSelectionUi(
     ? "観測者移動モード。ズーム操作は観測者の物理的な前進と後退です。"
     : rainbowMode === "external"
       ? "外側3Dモード。ドラッグで構造を回転し、赤と青紫を別々の雨滴から目へ結ぶ光路を確認できます。"
-      : "接近モード。ズームインで雨域へ進み、雨域からズームアウトすると連続虹へ戻れます。";
+      : "接近モード。観測者の目では、ホイールを始めたカーソル位置を視線として雨域へ進みます。虹帯なら、その色を目へ返す実在雨滴へ連続接近します。雨域からズームアウトすると同じ経路で連続虹へ戻れます。";
   canvas.setAttribute(
     "aria-label",
     armed
       ? "雨滴選択モード。画面に見える任意の雨滴を短くタップしてください。ドラッグ、ホイール、ピンチでは選択されません。"
-      : `${canvasModeDescription} ズームだけでは雨滴を選択しません。雨滴を選ぶボタンを押した後、見える雨滴を短くタップできます。`
+      : `${canvasModeDescription} 虹帯外では寄与滴を選びません。接近後は雨滴を選ぶボタンから、見える別の雨滴も短くタップできます。`
   );
   if (!isRainbowView(state.view)) return;
 
@@ -660,6 +689,30 @@ function computedDetailOrbitDirection(): THREE.Vector3 {
   return normal.addScaledVector(new THREE.Vector3(0, 1, 0), 0.18).normalize();
 }
 
+function externalRainbowCameraDirection(): THREE.Vector3 {
+  const sunLike = sunDirectionFromAngles(state.sunElevation, state.sunAzimuth);
+  const sun = new THREE.Vector3(sunLike.x, sunLike.y, sunLike.z).normalize();
+  const side = new THREE.Vector3().crossVectors(sun, new THREE.Vector3(0, 1, 0));
+  if (side.lengthSq() < 1e-10) side.set(1, 0, 0);
+  else side.normalize();
+  return sun.addScaledVector(side, 0.34).addScaledVector(new THREE.Vector3(0, 1, 0), 0.12).normalize();
+}
+
+function externalRainbowOverviewTarget(origin: THREE.Vector3): THREE.Vector3 {
+  const sunLike = sunDirectionFromAngles(state.sunElevation, state.sunAzimuth);
+  const antisolar = new THREE.Vector3(-sunLike.x, -sunLike.y, -sunLike.z).normalize();
+  const primary = rainbowAngleRange(1);
+  const secondary = rainbowAngleRange(2);
+  const meanRadiusDeg = (
+    primary.minimumDeg + primary.maximumDeg +
+    secondary.minimumDeg + secondary.maximumDeg
+  ) / 4;
+  const ringPlaneDistance = RAINBOW_SKY_RADIUS * Math.cos(
+    THREE.MathUtils.degToRad(meanRadiusDeg)
+  );
+  return origin.clone().addScaledVector(antisolar, ringPlaneDistance);
+}
+
 function rainbowCameraPose(frame: RainbowZoomFrame): RainbowCameraPose {
   const focus = rainbowJourney.getFocusSnapshot();
   const origin = observerOrigin();
@@ -676,33 +729,22 @@ function rainbowCameraPose(frame: RainbowZoomFrame): RainbowCameraPose {
     };
   }
   if (rainbowMode === "external") {
-    const orderPaths = rainbowJourney
-      .getRepresentativeWorldPaths()
-      .filter((path) => path.order === state.order);
-    const dropCentre = orderPaths.reduce(
-      (sum, path) => sum.add(path.dropletPosition),
-      new THREE.Vector3()
-    );
-    if (orderPaths.length > 0) dropCentre.multiplyScalar(1 / orderPaths.length);
-    else dropCentre.copy(origin).add(new THREE.Vector3(0, 3.2, 0));
-    // Frame the observer and both representative scattering volumes as one
-    // continuous world.  Keeping the target slightly closer to (and below)
-    // the observer prevents the human-scale reference from being clipped
-    // while the primary and secondary paths remain visible together.
-    const worldCentre = origin.clone().lerp(dropCentre, 0.6);
-    worldCentre.y = origin.y - 2.4;
+    // The outside overview must first reveal the observer-centred rainbow
+    // shell/cone as a whole. Zooming then moves the same camera toward the
+    // chosen real droplet and its physical ray path.
+    const overviewTarget = externalRainbowOverviewTarget(origin);
     const target = focus.explicitlySelected
-      ? worldCentre.clone().lerp(focus.position, frame.targetBlend)
-      : worldCentre;
+      ? overviewTarget.clone().lerp(focus.position, frame.targetBlend)
+      : overviewTarget;
     return {
       position: target
         .clone()
         .addScaledVector(
           structureDirection,
-          cameraDistanceFromProgress(frame.progress) * (0.52 - 0.04 * frame.progress)
+          cameraDistanceFromProgress(frame.progress) * (0.96 - 0.18 * frame.progress)
         ),
       target,
-      fov: 58
+      fov: 62
     };
   }
 
@@ -865,7 +907,7 @@ function resetCamera(): void {
         resetEyeLookDirection();
         resetInspectionNavigation();
       } else if (rainbowMode === "external") {
-        structureDirection.copy(DEFAULT_STRUCTURE_DIRECTION);
+        structureDirection.copy(externalRainbowCameraDirection());
       }
       detailOrbitDirection = null;
       applyRainbowProgress(0);
@@ -1202,7 +1244,7 @@ function updateRainbowDragHint(
         ? "◎ 選択中：見える雨滴を短くタップ / ドラッグでは選択しません"
         : canFreelyExploreRainField()
           ? "自由探索：ズームインで前進／ズームアウトで虹へ戻る、WASD/QEで移動"
-          : "↔ 視線を変更 / ズームで雨滴群へ（特定の滴は選びません）"
+          : "虹の調べたい色にカーソルを置き、ホイールでその視線の雨滴へ"
     );
   } else if (frame.progress <= EYE_LOOK_END) {
     setText("#drag-hint", "↔ ドラッグで視線を360°");
@@ -1223,6 +1265,7 @@ function setView(view: ViewName): void {
     if (!wasRainbow) {
       state.view = view;
       rainbowMode = "approach";
+      updateSceneAtmosphere();
       externalOpticalSnapshot = null;
       eyeViewTracksSun = true;
       resetEyeLookDirection();
@@ -1242,6 +1285,7 @@ function setView(view: ViewName): void {
 
   cancelRainbowAnimation();
   state.view = view;
+  updateSceneAtmosphere();
   rainbowJourney.setVisible(false);
   chase.setVisible(view === "chase");
   halo.setVisible(view === "halo");
@@ -1840,6 +1884,7 @@ function setRainbowMode(nextMode: RainbowMode): void {
       observerPositionM: rainbowJourney.getObserverPositionM(),
       lookDirection: eyeLookDirection.clone()
     };
+    structureDirection.copy(externalRainbowCameraDirection());
   } else if (rainbowMode === "external" && externalOpticalSnapshot) {
     eyeLookDirection.copy(externalOpticalSnapshot.lookDirection);
     rainbowJourney.setObserverPositionM(externalOpticalSnapshot.observerPositionM);
@@ -1847,6 +1892,7 @@ function setRainbowMode(nextMode: RainbowMode): void {
     externalOpticalSnapshot = null;
   }
   rainbowMode = nextMode;
+  updateSceneAtmosphere();
   state.rainbowZoom = nextMode === "move" ? 0 : rainbowProgressByMode[nextMode];
   if (nextMode === "approach") eyeViewTracksSun = false;
   rainbowJourney.setObserverView(isObserverViewMode());
@@ -1918,17 +1964,7 @@ document
 
 document.querySelectorAll<HTMLButtonElement>(".segment-button[data-order]").forEach((button) => {
   button.addEventListener("click", () => {
-    state.order = button.dataset.order === "2" ? 2 : 1;
-    document.querySelectorAll<HTMLButtonElement>(".segment-button[data-order]").forEach((candidate) => {
-      const active = candidate === button;
-      candidate.classList.toggle("is-active", active);
-      candidate.setAttribute("aria-pressed", String(active));
-    });
-    chaseBaseline = new RainbowChaseModel({
-      order: state.order,
-      sunElevationDeg: CHASE_SUN_ELEVATION,
-      sunAzimuthDeg: CHASE_SUN_AZIMUTH
-    }).snapshot(0);
+    setRainbowOrderValue(button.dataset.order === "2" ? 2 : 1);
     flushConditionUpdate();
   });
 });
@@ -2145,6 +2181,70 @@ controls.addEventListener("change", () => {
   requestRender();
 });
 
+function beginCursorDirectedRainbowApproach(
+  clientX: number,
+  clientY: number
+): string | null {
+  if (
+    rainbowMode !== "approach" ||
+    state.rainbowZoom > 1e-6 ||
+    !isRainbowView(state.view)
+  ) {
+    return null;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const direction = viewDirectionFromCanvasPoint(
+    camera,
+    clientX - rect.left,
+    clientY - rect.top,
+    rect.width,
+    rect.height
+  );
+  if (!direction) return null;
+
+  eyeViewTracksSun = false;
+  // Preserve the current full-rainbow framing as the reverse-trip endpoint.
+  // Only the forward path and rain-field gaze follow the cursor ray.
+  inspectionLookDirection.copy(direction);
+  inspectionPathDirection.copy(direction);
+  inspectionFreeOffset.set(0, 0, 0);
+  selectedApproachAnchorPosition = null;
+  selectedApproachAnchorDirection = null;
+  detailOrbitDirection = null;
+  resetOverlapPick();
+  resetWavelengthSelectionCycle();
+
+  const band = rainbowBandAtViewDirection(
+    direction,
+    state.sunElevation,
+    state.sunAzimuth
+  );
+  if (band && band.order !== state.order) {
+    setRainbowOrderValue(band.order);
+    rainbowJourney.setConditions(state.order, state.sunElevation, state.sunAzimuth);
+  }
+  const startTarget = controls.target.clone();
+  const startCameraPosition = camera.position.clone();
+  const snapshot = band
+    ? rainbowJourney.selectContributorForViewDirection(direction)
+    : null;
+  if (snapshot) {
+    acceptRainDropSelection(snapshot, startTarget, startCameraPosition);
+    const wavelength = snapshot.dominantWavelengthNm?.toFixed(0) ?? "不明";
+    const colorSide = snapshot.dominantWavelengthNm !== null && snapshot.dominantWavelengthNm >= 590
+      ? "赤側"
+      : snapshot.dominantWavelengthNm !== null && snapshot.dominantWavelengthNm <= 470
+        ? "青紫側"
+        : "中間色側";
+    return `カーソルの${colorSide}を視線として固定しました。${band?.order === 2 ? "副虹" : "主虹"}の実在雨滴 ${snapshot.id}（${wavelength} nm相当）へ、まず同じ視線の雨域を通って連続接近します。`;
+  }
+
+  if (rainbowJourney.hasExplicitSelection()) rainbowJourney.clearSelection();
+  return band
+    ? `カーソルは${band.order === 1 ? "主虹" : "副虹"}の計算帯ですが、現在の描画密度に対応する代表雨滴がありません。視線方向へ進みますが、別の雨滴へは付け替えません。`
+    : "カーソル位置を視線として固定しました。この方向は主虹・副虹の計算帯外なので、虹光を返す雨滴とは表示せず、その方向の雨域へ進みます。";
+}
+
 canvas.addEventListener(
   "wheel",
   (event) => {
@@ -2164,6 +2264,9 @@ canvas.addEventListener(
           ? event.deltaY * Math.max(1, stage.clientHeight)
           : event.deltaY;
     const amount = zoomAmountFromWheelPixels(pixelDelta);
+    const cursorStatus = amount > 0
+      ? beginCursorDirectedRainbowApproach(event.clientX, event.clientY)
+      : null;
     const action = currentRainbowZoomAction(amount);
     if (action === "physical-observer-move") {
       queuePhysicalObserverMove(
@@ -2178,6 +2281,7 @@ canvas.addEventListener(
       return;
     }
     applyRainbowProgress(state.rainbowZoom + amount);
+    if (cursorStatus) setText("#zoom-status", cursorStatus);
   },
   { capture: true, passive: false }
 );

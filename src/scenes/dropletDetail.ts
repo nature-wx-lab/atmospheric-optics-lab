@@ -82,6 +82,7 @@ export class DropletDetail {
   private incomingMaterial: THREE.LineBasicMaterial | null = null;
   private representativeGeometry: THREE.BufferGeometry | null = null;
   private representativeMaterial: THREE.LineBasicMaterial | null = null;
+  private representativeEmphasisMaterial: THREE.MeshBasicMaterial | null = null;
   private representativeVertexCount = 0;
   private readonly spectralMaterials: THREE.LineBasicMaterial[] = [];
   private readonly normalMaterials: THREE.LineDashedMaterial[] = [];
@@ -138,6 +139,10 @@ export class DropletDetail {
       );
       this.representativeMaterial.opacity = 0.96 * frame.representativeRayOpacity;
     }
+    if (this.representativeEmphasisMaterial) {
+      this.representativeEmphasisMaterial.opacity =
+        0.98 * frame.representativeRayOpacity * Math.pow(frame.representativeRayReveal, 3);
+    }
     if (this.incomingMaterial) {
       this.incomingMaterial.opacity = 0.96 * frame.representativeRayOpacity;
     }
@@ -163,6 +168,7 @@ export class DropletDetail {
     this.incomingMaterial = null;
     this.representativeGeometry = null;
     this.representativeMaterial = null;
+    this.representativeEmphasisMaterial = null;
     this.representativeVertexCount = 0;
     this.spectralMaterials.length = 0;
     this.normalMaterials.length = 0;
@@ -243,9 +249,8 @@ export class DropletDetail {
 
   private addRepresentativeRay(): void {
     const trace = this.representativeTrace();
-    const sampled = resamplePolyline(
-      rayPoints({ ...trace, points: trace.points.slice(1) }, 0)
-    );
+    const physicalPoints = rayPoints({ ...trace, points: trace.points.slice(1) }, 0);
+    const sampled = resamplePolyline(physicalPoints);
     const geometry = new THREE.BufferGeometry().setFromPoints(sampled.points);
     const selectedColor = new THREE.Color(this.representative.color);
     const colors = new Float32Array(sampled.points.length * 3);
@@ -271,6 +276,44 @@ export class DropletDetail {
     this.representativeGeometry = geometry;
     this.representativeMaterial = material;
     this.representativeVertexCount = sampled.points.length;
+
+    const emphasisMaterial = new THREE.MeshBasicMaterial({
+      color: selectedColor,
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false
+    });
+    for (let index = 0; index < physicalPoints.length - 1; index += 1) {
+      const start = physicalPoints[index];
+      const end = physicalPoints[index + 1];
+      if (!start || !end) continue;
+      const delta = end.clone().sub(start);
+      const length = delta.length();
+      if (length < 1e-8) continue;
+      const segment = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.034, 0.034, length, 10, 1, true),
+        emphasisMaterial
+      );
+      segment.position.copy(start).lerp(end, 0.5);
+      segment.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+      segment.name = `selected-wavelength-emphasis-segment-${index + 1}`;
+      segment.renderOrder = 10;
+      this.group.add(segment);
+    }
+    const entry = physicalPoints[0];
+    if (entry) {
+      const entryMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.085, 16, 10),
+        emphasisMaterial
+      );
+      entryMarker.position.copy(entry);
+      entryMarker.name = "selected-wavelength-water-entry-point";
+      entryMarker.renderOrder = 11;
+      this.group.add(entryMarker);
+    }
+    this.representativeEmphasisMaterial = emphasisMaterial;
   }
 
   private addSpectralRays(): void {

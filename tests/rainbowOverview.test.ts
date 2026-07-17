@@ -430,13 +430,43 @@ test("observer-eye presentation starts with continuous radiance and resolves rea
     overview.setObserverView(false);
     assert.equal(overview.group.getObjectByName("observer")?.visible, true);
     assert.equal(rain.material.sizeAttenuation, false);
-    assert.equal(radiance.material.uniforms.uOpacity?.value, 0);
-    assert.equal(radiance.visible, false);
+    assert.equal(glints.material.sizeAttenuation, false);
+    assert.ok(radiance.material.uniforms.uOpacity?.value > 0.9);
+    assert.equal(radiance.visible, true);
     assert.equal(sky.visible, false);
+    assert.equal(
+      overview.group.getObjectByName("sample-eye-to-contributing-droplet-directions")?.visible,
+      false
+    );
     assert.equal(
       overview.group.getObjectByName("sun-to-eye-to-antisolar-axis")?.visible,
       true
     );
+  } finally {
+    overview.dispose();
+  }
+});
+
+test("a rainbow-band view ray selects a real contributor of the pointed colour", () => {
+  const overview = new RainbowOverview();
+  try {
+    const redPath = overview.getSnapshot().representativePaths.find(
+      (path) => path.order === 1 && path.wavelengthNm > 620
+    );
+    assert.ok(redPath);
+    const redDirection = redPath.dropletPosition
+      .clone()
+      .sub(redPath.observerPosition)
+      .normalize();
+    const selected = overview.selectContributorForViewDirection(redDirection);
+    assert.ok(selected);
+    assert.equal(selected.observation.contributes, true);
+    assert.ok(selected.observation.dominantWavelengthNm !== null);
+    assert.ok(selected.observation.dominantWavelengthNm > 590);
+
+    const sun = sunDirectionFromAngles(12, 225);
+    const antisolar = new THREE.Vector3(-sun.x, -sun.y, -sun.z);
+    assert.equal(overview.selectContributorForViewDirection(antisolar), null);
   } finally {
     overview.dispose();
   }

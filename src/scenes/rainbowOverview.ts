@@ -21,7 +21,8 @@ import {
   type RainbowZoomFrame
 } from "../physics/semanticZoom";
 
-const SKY_RADIUS = 14.5;
+export const RAINBOW_SKY_RADIUS = 14.5;
+const SKY_RADIUS = RAINBOW_SKY_RADIUS;
 
 function createSoftPointTexture(size = 32): THREE.DataTexture {
   const data = new Uint8Array(size * size * 4);
@@ -425,6 +426,53 @@ export class RainbowOverview {
     return selected ? this.selectByIndex(selected.index) : null;
   }
 
+  /**
+   * Resolve a human-chosen view ray to the nearest real contributor in the
+   * fixed rain field. The band gate is evaluated first so an arbitrary sky
+   * direction can never acquire a false rainbow source.
+   */
+  selectContributorForViewDirection(
+    viewDirection: THREE.Vector3,
+    bandPaddingDeg = 0.45
+  ): RainbowOverviewSelection | null {
+    if (viewDirection.lengthSq() < 1e-12 || !Number.isFinite(bandPaddingDeg)) return null;
+    const direction = viewDirection.clone().normalize();
+    const apparentRadiusDeg = THREE.MathUtils.radToDeg(
+      Math.acos(THREE.MathUtils.clamp(direction.dot(this.sunDirection().negate()), -1, 1))
+    );
+    const range = rainbowAngleRange(this.order);
+    if (
+      apparentRadiusDeg < range.minimumDeg - Math.max(0, bandPaddingDeg) ||
+      apparentRadiusDeg > range.maximumDeg + Math.max(0, bandPaddingDeg)
+    ) {
+      return null;
+    }
+
+    let bestIndex = -1;
+    let bestScore = Infinity;
+    for (const index of this.visibleContributorIndices()) {
+      const offset = index * 3;
+      const candidateDirection = new THREE.Vector3(
+        this.sightlineDirections[offset] ?? 0,
+        this.sightlineDirections[offset + 1] ?? 0,
+        this.sightlineDirections[offset + 2] ?? 0
+      );
+      const directionalError = Math.acos(
+        THREE.MathUtils.clamp(direction.dot(candidateDirection), -1, 1)
+      );
+      const observation = this.contributorObservations.get(index);
+      if (!observation?.contributes) continue;
+      const score = directionalError +
+        Math.abs(observation.distanceFromObserverM - 180) * 1e-8 +
+        index * 1e-12;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    return bestIndex >= 0 ? this.selectByIndex(bestIndex) : null;
+  }
+
   pickDroplet(
     camera: THREE.Camera,
     pointerX: number,
@@ -755,11 +803,13 @@ export class RainbowOverview {
     const sky = this.fixed.getObjectByName("observer-sky-radiance-background");
     if (sky) sky.visible = this.observerView && this.skyOpacity > 0.001;
 
+    const radiancePresentationOpacity = this.observerView
+      ? this.radianceOpacity
+      : 0.92;
     for (const material of this.rainbowRadianceMaterials) {
       const uniform = material.uniforms.uOpacity;
       if (uniform) {
-        uniform.value =
-          (this.observerView ? this.radianceOpacity : 0) * this.journeyOpacity;
+        uniform.value = radiancePresentationOpacity * this.journeyOpacity;
       }
     }
     for (const order of [1, 2] as const) {
@@ -767,17 +817,19 @@ export class RainbowOverview {
         `continuous-relative-radiance-order-${order}-from-unresolved-rain-field`
       );
       if (radiance) {
-        radiance.visible = this.observerView && this.radianceOpacity > 0.001;
+        radiance.visible = this.observerView
+          ? this.radianceOpacity > 0.001
+          : true;
       }
     }
 
     const rainOpacity = this.observerView
       ? (0.022 + 0.058 * this.resolvedFieldOpacity) * this.resolvedFieldOpacity
-      : 0.1;
+      : 0.085;
     if (this.rainMaterial) {
       this.rainMaterial.size = this.observerView
         ? 1.2 + 1.5 * this.resolvedFieldOpacity
-        : 1.1;
+        : 0.8;
       this.rainMaterial.sizeAttenuation = false;
       this.rainMaterial.fog = !this.observerView;
       this.rainMaterial.opacity = rainOpacity * this.journeyOpacity;
@@ -793,12 +845,13 @@ export class RainbowOverview {
 
     const coreOpacity = this.observerView
       ? 0.56 * this.resolvedContributorOpacity
-      : 0.98;
+      : 0.34;
     if (this.contributorCoreMaterial) {
       this.contributorCoreMaterial.size = this.observerView
         ? 1.5 + 0.9 * this.resolvedContributorOpacity
-        : 2.7;
+        : 1.35;
       this.contributorCoreMaterial.sizeAttenuation = false;
+      this.contributorCoreMaterial.fog = !this.observerView;
       this.contributorCoreMaterial.opacity = coreOpacity * this.journeyOpacity;
       this.contributorCoreMaterial.needsUpdate = true;
       this.baseOpacities.set(this.contributorCoreMaterial, coreOpacity);
@@ -813,10 +866,11 @@ export class RainbowOverview {
 
     const glowOpacity = this.observerView
       ? 0.1 * this.resolvedContributorOpacity
-      : 0.26;
+      : 0.055;
     if (this.contributorGlowMaterial) {
-      this.contributorGlowMaterial.size = this.observerView ? 3.6 : 7.5;
+      this.contributorGlowMaterial.size = this.observerView ? 3.6 : 3.2;
       this.contributorGlowMaterial.sizeAttenuation = false;
+      this.contributorGlowMaterial.fog = !this.observerView;
       this.contributorGlowMaterial.opacity = glowOpacity * this.journeyOpacity;
       this.contributorGlowMaterial.needsUpdate = true;
       this.baseOpacities.set(this.contributorGlowMaterial, glowOpacity);
@@ -841,10 +895,12 @@ export class RainbowOverview {
         object.name.startsWith("calculated-rainbow-band-boundary-") ||
         object.name === "observer-centred-cone-direction-guide" ||
         object.name.startsWith("observer-centred-rainbow-cone-surface-") ||
-        object.name === "sample-eye-to-contributing-droplet-directions" ||
         object.name.startsWith("representative-physical-ray-paths-order-")
       ) {
         object.visible = !this.observerView;
+      }
+      if (object.name === "sample-eye-to-contributing-droplet-directions") {
+        object.visible = false;
       }
     });
   }

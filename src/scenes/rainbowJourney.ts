@@ -255,6 +255,17 @@ export class RainbowJourney {
     return selected ? this.acceptSelection(selected) : null;
   }
 
+  selectContributorForViewDirection(
+    viewDirection: THREE.Vector3,
+    bandPaddingDeg = 0.45
+  ): FocusDropletSnapshot | null {
+    const selected = this.overview.selectContributorForViewDirection(
+      viewDirection,
+      bandPaddingDeg
+    );
+    return selected ? this.acceptSelection(selected) : null;
+  }
+
   pickDroplet(
     camera: THREE.Camera,
     pointerX: number,
