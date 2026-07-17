@@ -433,9 +433,16 @@ export class RainbowOverview {
    */
   selectContributorForViewDirection(
     viewDirection: THREE.Vector3,
-    bandPaddingDeg = 0.45
+    targetWavelengthNm: number | null = null,
+    bandPaddingDeg = 1.35
   ): RainbowOverviewSelection | null {
-    if (viewDirection.lengthSq() < 1e-12 || !Number.isFinite(bandPaddingDeg)) return null;
+    if (
+      viewDirection.lengthSq() < 1e-12 ||
+      !Number.isFinite(bandPaddingDeg) ||
+      (targetWavelengthNm !== null && !Number.isFinite(targetWavelengthNm))
+    ) {
+      return null;
+    }
     const direction = viewDirection.clone().normalize();
     const apparentRadiusDeg = THREE.MathUtils.radToDeg(
       Math.acos(THREE.MathUtils.clamp(direction.dot(this.sunDirection().negate()), -1, 1))
@@ -461,8 +468,11 @@ export class RainbowOverview {
         THREE.MathUtils.clamp(direction.dot(candidateDirection), -1, 1)
       );
       const observation = this.contributorObservations.get(index);
-      if (!observation?.contributes) continue;
-      const score = directionalError +
+      if (!observation?.contributes || observation.dominantWavelengthNm === null) continue;
+      const wavelengthError = targetWavelengthNm === null
+        ? 0
+        : Math.abs(observation.dominantWavelengthNm - targetWavelengthNm) / 4_000;
+      const score = directionalError + wavelengthError +
         Math.abs(observation.distanceFromObserverM - 180) * 1e-8 +
         index * 1e-12;
       if (score < bestScore) {

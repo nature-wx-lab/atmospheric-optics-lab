@@ -21,7 +21,7 @@ import {
 import { RainbowSelectionGesture } from "./interaction/rainbowSelectionGesture";
 import {
   rainbowBandAtViewDirection,
-  viewDirectionFromCanvasPoint
+  viewDirectionFromClientPoint
 } from "./interaction/rainbowCursorTarget";
 import {
   resolveRainbowZoomAction,
@@ -137,6 +137,7 @@ function selectedDropStatus(snapshot: FocusDropletSnapshot): string {
 function updateSelectedDropUi(snapshot: FocusDropletSnapshot): void {
   setText("#selected-drop-readout", selectedDropStatus(snapshot));
   if (!snapshot.explicitlySelected) {
+    setText("#mobile-selected-drop", "雨滴を選択");
     for (const selector of ["#drop-id-input", "#mobile-drop-id-input"]) {
       const idInput = requireElement<HTMLInputElement>(selector);
       if (document.activeElement !== idInput) idInput.value = "";
@@ -828,6 +829,12 @@ function applyRainbowProgress(progress: number): void {
   rainbowJourney.applyZoom(frame);
   applyRainbowCameraPose(frame);
   updateRainbowProgressUi(frame);
+  // Chapter announcements happen only at boundaries; explicitly refresh the
+  // terminal states so a completed reverse trip never keeps an old 20%/94%
+  // message beside a slider that is already at 0%/100%.
+  if (frame.progress <= 1e-6 || frame.progress >= 1 - 1e-6) {
+    announceRainbowProgress(frame);
+  }
   requestRender();
 }
 
@@ -2193,12 +2200,11 @@ function beginCursorDirectedRainbowApproach(
     return null;
   }
   const rect = canvas.getBoundingClientRect();
-  const direction = viewDirectionFromCanvasPoint(
+  const direction = viewDirectionFromClientPoint(
     camera,
-    clientX - rect.left,
-    clientY - rect.top,
-    rect.width,
-    rect.height
+    clientX,
+    clientY,
+    rect
   );
   if (!direction) return null;
 
@@ -2226,7 +2232,10 @@ function beginCursorDirectedRainbowApproach(
   const startTarget = controls.target.clone();
   const startCameraPosition = camera.position.clone();
   const snapshot = band
-    ? rainbowJourney.selectContributorForViewDirection(direction)
+    ? rainbowJourney.selectContributorForViewDirection(
+        direction,
+        band.targetWavelengthNm
+      )
     : null;
   if (snapshot) {
     acceptRainDropSelection(snapshot, startTarget, startCameraPosition);
@@ -2239,7 +2248,11 @@ function beginCursorDirectedRainbowApproach(
     return `カーソルの${colorSide}を視線として固定しました。${band?.order === 2 ? "副虹" : "主虹"}の実在雨滴 ${snapshot.id}（${wavelength} nm相当）へ、まず同じ視線の雨域を通って連続接近します。`;
   }
 
-  if (rainbowJourney.hasExplicitSelection()) rainbowJourney.clearSelection();
+  if (rainbowJourney.hasExplicitSelection()) {
+    rainbowJourney.clearSelection();
+    updateSelectedDropUi(rainbowJourney.getFocusSnapshot());
+    updateRainbowExplanation(rainbowZoomFrame(state.rainbowZoom));
+  }
   return band
     ? `カーソルは${band.order === 1 ? "主虹" : "副虹"}の計算帯ですが、現在の描画密度に対応する代表雨滴がありません。視線方向へ進みますが、別の雨滴へは付け替えません。`
     : "カーソル位置を視線として固定しました。この方向は主虹・副虹の計算帯外なので、虹光を返す雨滴とは表示せず、その方向の雨域へ進みます。";

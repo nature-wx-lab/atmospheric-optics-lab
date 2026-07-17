@@ -257,10 +257,12 @@ export class RainbowJourney {
 
   selectContributorForViewDirection(
     viewDirection: THREE.Vector3,
-    bandPaddingDeg = 0.45
+    targetWavelengthNm: number | null = null,
+    bandPaddingDeg = 1.35
   ): FocusDropletSnapshot | null {
     const selected = this.overview.selectContributorForViewDirection(
       viewDirection,
+      targetWavelengthNm,
       bandPaddingDeg
     );
     return selected ? this.acceptSelection(selected) : null;

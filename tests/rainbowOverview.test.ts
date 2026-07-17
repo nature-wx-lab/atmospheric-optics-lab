@@ -472,6 +472,43 @@ test("a rainbow-band view ray selects a real contributor of the pointed colour",
   }
 });
 
+test("a rendered red fringe resolves to a nearby real red contributor", () => {
+  const overview = new RainbowOverview();
+  try {
+    const redPath = overview.getSnapshot().representativePaths.find(
+      (path) => path.order === 1 && path.wavelengthNm > 620
+    );
+    assert.ok(redPath);
+    const observerToRed = redPath.dropletPosition
+      .clone()
+      .sub(redPath.observerPosition)
+      .normalize();
+    const sun = sunDirectionFromAngles(12, 225);
+    const antisolar = new THREE.Vector3(-sun.x, -sun.y, -sun.z).normalize();
+    const radialDirection = observerToRed
+      .clone()
+      .addScaledVector(antisolar, -observerToRed.dot(antisolar))
+      .normalize();
+    const fringeDirection = antisolar
+      .clone()
+      .multiplyScalar(Math.cos(THREE.MathUtils.degToRad(43.1)))
+      .addScaledVector(radialDirection, Math.sin(THREE.MathUtils.degToRad(43.1)))
+      .normalize();
+
+    const selected = overview.selectContributorForViewDirection(
+      fringeDirection,
+      656.3
+    );
+    assert.ok(selected);
+    assert.equal(selected.observation.contributes, true);
+    assert.ok(selected.observation.dominantWavelengthNm !== null);
+    assert.ok(selected.observation.dominantWavelengthNm > 590);
+    assert.ok(selected.position.clone().sub(redPath.observerPosition).normalize().angleTo(fringeDirection) < 0.04);
+  } finally {
+    overview.dispose();
+  }
+});
+
 test("observer-eye rainbow taps prefer a contributing ID over overlapping gray drops", () => {
   const overview = new RainbowOverview();
   try {
