@@ -7,7 +7,7 @@ import {
   observeRainField,
   rainbowSpectrumMatch
 } from "../src/physics/rainField.ts";
-import { findStationaryRay } from "../src/physics/rainbow.ts";
+import { findStationaryRay, SPECTRAL_SAMPLES } from "../src/physics/rainbow.ts";
 import { sunDirectionFromAngles } from "../src/physics/semanticZoom.ts";
 
 test("the overview rain field has fixed unique IDs and deterministic positions", () => {
@@ -88,10 +88,12 @@ test("a droplet near the antisolar centre is never labeled as a primary rainbow 
 });
 
 test("the primary and secondary spectrum mappings preserve their opposite color order", () => {
-  const primaryRed = findStationaryRay(1.3311, 1).radiusDeg;
-  const primaryViolet = findStationaryRay(1.3428, 1).radiusDeg;
-  const secondaryRed = findStationaryRay(1.3311, 2).radiusDeg;
-  const secondaryViolet = findStationaryRay(1.3428, 2).radiusDeg;
+  const red = SPECTRAL_SAMPLES.find((sample) => sample.wavelengthNm === 656.3)!;
+  const violet = SPECTRAL_SAMPLES.find((sample) => sample.wavelengthNm === 404.7)!;
+  const primaryRed = findStationaryRay(red.waterIndex, 1).radiusDeg;
+  const primaryViolet = findStationaryRay(violet.waterIndex, 1).radiusDeg;
+  const secondaryRed = findStationaryRay(red.waterIndex, 2).radiusDeg;
+  const secondaryViolet = findStationaryRay(violet.waterIndex, 2).radiusDeg;
   assert.ok(primaryRed > primaryViolet);
   assert.ok(secondaryRed < secondaryViolet);
   assert.ok(Math.abs(rainbowSpectrumMatch(primaryRed, 1).dominantWavelengthNm! - 656.3) < 1e-7);

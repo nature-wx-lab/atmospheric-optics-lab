@@ -5,7 +5,6 @@ import {
   type RainbowOrder
 } from "../physics/rainbow";
 import {
-  OBSERVER_OPTICAL_ORIGIN,
   rainbowZoomFrame,
   sunDirectionFromAngles,
   type RainbowZoomFrame
@@ -15,14 +14,6 @@ import {
   RainbowOverview,
   type RainbowOverviewSelection
 } from "./rainbowOverview";
-
-function opticalOrigin(): THREE.Vector3 {
-  return new THREE.Vector3(
-    OBSERVER_OPTICAL_ORIGIN.x,
-    OBSERVER_OPTICAL_ORIGIN.y,
-    OBSERVER_OPTICAL_ORIGIN.z
-  );
-}
 
 export interface FocusDropletSnapshot {
   readonly id: string;
@@ -47,6 +38,10 @@ export interface FocusDropletSnapshot {
   readonly totalDroplets: number;
   readonly visibleDroplets: number;
   readonly contributingDroplets: number;
+  readonly observerPositionM: THREE.Vector3;
+  readonly observerScenePosition: THREE.Vector3;
+  /** True only after the visitor selected a wavelength, point, adjacent ID, or direct ID. */
+  readonly explicitlySelected: boolean;
 }
 
 export class RainbowJourney {
@@ -67,6 +62,17 @@ export class RainbowJourney {
     this.focusGuideGeometry,
     this.focusGuideMaterial
   );
+  private readonly incomingWorldGeometry = new THREE.BufferGeometry();
+  private readonly incomingWorldMaterial = new THREE.LineBasicMaterial({
+    color: 0xfffbf2,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false
+  });
+  private readonly incomingWorldRay = new THREE.Line(
+    this.incomingWorldGeometry,
+    this.incomingWorldMaterial
+  );
   private order: RainbowOrder = 1;
   private sunElevationDeg = 12;
   private sunAzimuthDeg = 225;
@@ -76,16 +82,25 @@ export class RainbowJourney {
   private outgoingDirection = new THREE.Vector3(-1, 0, 0);
   private representativeRayDirection = new THREE.Vector3(-1, 0, 0);
   private selection: RainbowOverviewSelection;
+  private explicitlySelected = false;
   private referenceWavelengthNm = 530;
   private referenceRefractiveIndex = 1.3352;
+  private observerView = true;
 
   constructor() {
     this.group.name = "rainbow-seamless-journey-through-real-rain-field";
     this.marker.name = "selected-existing-rain-field-droplet";
     this.focusGuide.name = "observer-sightline-to-selected-existing-droplet";
+    this.incomingWorldRay.name = "white-sunlight-before-selected-rain-drop";
     this.addMarker();
-    this.group.add(this.overview.group, this.focusGuide, this.marker, this.detail.group);
-    this.detail.setVisible(true);
+    this.group.add(
+      this.overview.group,
+      this.incomingWorldRay,
+      this.focusGuide,
+      this.marker,
+      this.detail.group
+    );
+    this.detail.setVisible(false);
     this.selection = this.overview.getSelected();
     this.updateSelectedDroplet();
   }
@@ -106,24 +121,68 @@ export class RainbowJourney {
     this.updateSelectedDroplet();
   }
 
+  setObserverPositionM(positionM: THREE.Vector3): void {
+    this.overview.setObserverPositionM(positionM);
+    this.selection = this.overview.getSelected();
+    this.updateSelectedDroplet();
+    this.applyZoom(this.frame);
+  }
+
+  getObserverPositionM(): THREE.Vector3 {
+    return this.overview.getObserverPositionM();
+  }
+
+  getObserverScenePosition(): THREE.Vector3 {
+    return this.overview.getObserverScenePosition();
+  }
+
   setVisible(visible: boolean): void {
     this.group.visible = visible;
   }
 
   setObserverView(observerView: boolean): void {
+    this.observerView = observerView;
     this.overview.setObserverView(observerView);
+    this.applyZoom(this.frame);
   }
 
   applyZoom(frame: RainbowZoomFrame): void {
     this.frame = frame;
-    this.overview.setSemanticFrame(frame);
-    this.overview.setJourneyOpacity(frame.overviewOpacity);
-    this.detail.setJourneyFrame(frame);
-    this.markerMaterials[0]!.opacity = 0.76 * frame.focusMarkerOpacity;
-    this.markerMaterials[1]!.opacity = 0.16 * frame.focusMarkerOpacity;
+    const presentationFrame = this.explicitlySelected
+      ? frame
+      : {
+          ...frame,
+          radianceOpacity: Math.max(frame.radianceOpacity, 0.24),
+          overviewOpacity: 1,
+          focusMarkerOpacity: 0,
+          surfaceOpacity: 0,
+          representativeRayOpacity: 0,
+          representativeRayReveal: 0,
+          spectralOpacity: 0,
+          normalOpacity: 0,
+          lossBranchOpacity: 0
+        };
+    this.overview.setSemanticFrame(presentationFrame);
+    this.overview.setJourneyOpacity(presentationFrame.overviewOpacity);
+    this.detail.setVisible(this.explicitlySelected);
+    this.detail.setJourneyFrame(presentationFrame);
+    this.marker.visible = this.explicitlySelected;
+    this.focusGuide.visible = this.explicitlySelected;
+    this.incomingWorldRay.visible = this.explicitlySelected && !this.observerView;
+    this.markerMaterials[0]!.opacity = 0.76 * presentationFrame.focusMarkerOpacity;
+    this.markerMaterials[1]!.opacity = 0.16 * presentationFrame.focusMarkerOpacity;
     this.focusGuideMaterial.opacity = this.selection.observation.contributes
-      ? 0.3 * Math.max(frame.focusMarkerOpacity, frame.representativeRayOpacity)
-      : 0.26 * frame.focusMarkerOpacity;
+      ? 0.3 * Math.max(
+          presentationFrame.focusMarkerOpacity,
+          presentationFrame.representativeRayOpacity
+        )
+      : 0.26 * presentationFrame.focusMarkerOpacity;
+    this.incomingWorldMaterial.opacity = this.observerView
+      ? 0
+      : 0.72 * Math.max(
+          presentationFrame.focusMarkerOpacity,
+          presentationFrame.representativeRayOpacity
+        );
   }
 
   getFocusPosition(): THREE.Vector3 {
@@ -154,8 +213,21 @@ export class RainbowJourney {
       diameterMm: droplet.diameterMm,
       totalDroplets: field.totalDroplets,
       visibleDroplets: field.visibleDroplets,
-      contributingDroplets: field.contributingDroplets
+      contributingDroplets: field.contributingDroplets,
+      observerPositionM: field.observerPositionM.clone(),
+      observerScenePosition: field.observerScenePosition.clone(),
+      explicitlySelected: this.explicitlySelected
     };
+  }
+
+  hasExplicitSelection(): boolean {
+    return this.explicitlySelected;
+  }
+
+  clearSelection(): FocusDropletSnapshot {
+    this.explicitlySelected = false;
+    this.applyZoom(this.frame);
+    return this.getFocusSnapshot();
   }
 
   selectById(id: string): FocusDropletSnapshot | null {
@@ -165,6 +237,17 @@ export class RainbowJourney {
 
   selectAdjacentContributor(direction: -1 | 1): FocusDropletSnapshot | null {
     const selected = this.overview.selectAdjacentContributor(direction);
+    return selected ? this.acceptSelection(selected) : null;
+  }
+
+  selectContributorNearestWavelength(
+    targetWavelengthNm: number,
+    candidateOffset = 0
+  ): FocusDropletSnapshot | null {
+    const selected = this.overview.selectContributorNearestWavelength(
+      targetWavelengthNm,
+      candidateOffset
+    );
     return selected ? this.acceptSelection(selected) : null;
   }
 
@@ -206,11 +289,14 @@ export class RainbowJourney {
     });
     this.focusGuideGeometry.dispose();
     this.focusGuideMaterial.dispose();
+    this.incomingWorldGeometry.dispose();
+    this.incomingWorldMaterial.dispose();
     this.group.clear();
   }
 
   private acceptSelection(selection: RainbowOverviewSelection): FocusDropletSnapshot {
     this.selection = selection;
+    this.explicitlySelected = true;
     this.updateSelectedDroplet();
     this.applyZoom(this.frame);
     return this.getFocusSnapshot();
@@ -243,7 +329,8 @@ export class RainbowJourney {
     const sun = sunDirectionFromAngles(this.sunElevationDeg, this.sunAzimuthDeg);
     this.focusPosition.copy(this.selection.position);
     this.incomingDirection.set(-sun.x, -sun.y, -sun.z).normalize();
-    this.outgoingDirection.copy(opticalOrigin()).sub(this.focusPosition).normalize();
+    const observerOrigin = this.overview.getObserverScenePosition();
+    this.outgoingDirection.copy(observerOrigin).sub(this.focusPosition).normalize();
 
     this.referenceWavelengthNm =
       observation.dominantWavelengthNm ?? observation.nearestWavelengthNm;
@@ -278,9 +365,14 @@ export class RainbowJourney {
     this.marker.position.copy(this.focusPosition);
     this.detail.group.position.copy(this.focusPosition);
     this.orientDetailToWorld();
-    this.focusGuideGeometry.setFromPoints([opticalOrigin(), this.focusPosition]);
+    this.focusGuideGeometry.setFromPoints([observerOrigin, this.focusPosition]);
     this.focusGuideGeometry.computeBoundingSphere();
     this.focusGuide.computeLineDistances();
+    this.incomingWorldGeometry.setFromPoints([
+      this.focusPosition.clone().addScaledVector(this.incomingDirection, -5.5),
+      this.focusPosition
+    ]);
+    this.incomingWorldGeometry.computeBoundingSphere();
   }
 
   private orientDetailToWorld(): void {

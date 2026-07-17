@@ -45,7 +45,7 @@ function createSoftPointTexture(size = 32): THREE.DataTexture {
   return texture;
 }
 
-function opticalOrigin(): THREE.Vector3 {
+function defaultOpticalOrigin(): THREE.Vector3 {
   return new THREE.Vector3(
     OBSERVER_OPTICAL_ORIGIN.x,
     OBSERVER_OPTICAL_ORIGIN.y,
@@ -119,6 +119,8 @@ export interface RainbowOverviewSnapshot {
   readonly visibleDroplets: number;
   readonly contributingDroplets: number;
   readonly selected: RainbowOverviewSelection;
+  readonly observerPositionM: THREE.Vector3;
+  readonly observerScenePosition: THREE.Vector3;
 }
 
 interface PickCandidate {
@@ -131,6 +133,7 @@ export class RainbowOverview {
   readonly group = new THREE.Group();
   private readonly fixed = new THREE.Group();
   private readonly optical = new THREE.Group();
+  private readonly observerFrame = new THREE.Group();
   private readonly droplets: readonly RainFieldDroplet[];
   private readonly scenePositions: Float32Array;
   private readonly sightlineDirections: Float32Array;
@@ -160,12 +163,19 @@ export class RainbowOverview {
   private resolvedContributorOpacity = 0;
   private observerView = true;
   private lastPickCandidateCount = 0;
+  private readonly observerPositionM = new THREE.Vector3(
+    DEFAULT_RAIN_FIELD_OPTIONS.observerPositionM.x,
+    DEFAULT_RAIN_FIELD_OPTIONS.observerPositionM.y,
+    DEFAULT_RAIN_FIELD_OPTIONS.observerPositionM.z
+  );
 
   constructor() {
     this.group.name = "rainbow-overview";
     this.fixed.name = "fixed-rain-field-and-observer";
     this.optical.name = "observer-dependent-rainbow-contributors";
     this.group.add(this.fixed, this.optical);
+    this.observerFrame.name = "physical-observer-frame";
+    this.fixed.add(this.observerFrame);
     this.droplets = generateRainField();
     this.scenePositions = new Float32Array(this.droplets.length * 3);
     this.sightlineDirections = new Float32Array(this.droplets.length * 3);
@@ -186,6 +196,29 @@ export class RainbowOverview {
     this.sunElevation = sunElevation;
     this.sunAzimuth = sunAzimuth;
     if (changed) this.reclassify();
+  }
+
+  setObserverPositionM(positionM: THREE.Vector3): void {
+    if (
+      !Number.isFinite(positionM.x) ||
+      !Number.isFinite(positionM.y) ||
+      !Number.isFinite(positionM.z)
+    ) {
+      throw new RangeError("observer position must be finite");
+    }
+    if (this.observerPositionM.distanceToSquared(positionM) < 1e-12) return;
+    this.observerPositionM.copy(positionM);
+    this.updateSightlineDirections();
+    this.observerFrame.position.copy(this.opticalOrigin()).sub(defaultOpticalOrigin());
+    this.reclassify();
+  }
+
+  getObserverPositionM(): THREE.Vector3 {
+    return this.observerPositionM.clone();
+  }
+
+  getObserverScenePosition(): THREE.Vector3 {
+    return this.opticalOrigin();
   }
 
   setDensity(density: number): void {
@@ -229,7 +262,9 @@ export class RainbowOverview {
       totalDroplets: this.droplets.length,
       visibleDroplets: this.visibleCount,
       contributingDroplets: this.visibleContributorIndices().length,
-      selected: this.getSelected()
+      selected: this.getSelected(),
+      observerPositionM: this.getObserverPositionM(),
+      observerScenePosition: this.getObserverScenePosition()
     };
   }
 
@@ -275,6 +310,34 @@ export class RainbowOverview {
       : (current + direction + contributors.length) % contributors.length;
     const index = contributors[next];
     return index === undefined ? null : this.selectByIndex(index);
+  }
+
+  selectContributorNearestWavelength(
+    targetWavelengthNm: number,
+    candidateOffset = 0
+  ): RainbowOverviewSelection | null {
+    if (!Number.isFinite(targetWavelengthNm) || targetWavelengthNm < 380 || targetWavelengthNm > 780) {
+      return null;
+    }
+    const candidates = this.visibleContributorIndices()
+      .map((index) => ({ index, observation: this.contributorObservations.get(index) }))
+      .filter(
+        (candidate): candidate is { index: number; observation: RainDropletObservation } =>
+          candidate.observation?.contributes === true &&
+          candidate.observation.dominantWavelengthNm !== null
+      )
+      .sort((first, second) =>
+        Math.abs(first.observation.dominantWavelengthNm! - targetWavelengthNm) -
+          Math.abs(second.observation.dominantWavelengthNm! - targetWavelengthNm) ||
+        Math.abs(first.observation.distanceFromObserverM - 180) -
+          Math.abs(second.observation.distanceFromObserverM - 180) ||
+        first.index - second.index
+      );
+    if (candidates.length === 0) return null;
+    const offset =
+      ((Math.trunc(candidateOffset) % candidates.length) + candidates.length) % candidates.length;
+    const selected = candidates[offset];
+    return selected ? this.selectByIndex(selected.index) : null;
   }
 
   pickDroplet(
@@ -341,9 +404,20 @@ export class RainbowOverview {
     ).normalize();
   }
 
+  private opticalOrigin(): THREE.Vector3 {
+    const initial = DEFAULT_RAIN_FIELD_OPTIONS.observerPositionM;
+    return defaultOpticalOrigin().add(
+      new THREE.Vector3(
+        this.observerPositionM.x - initial.x,
+        this.observerPositionM.y - initial.y,
+        this.observerPositionM.z - initial.z
+      ).multiplyScalar(METERS_TO_SCENE_UNITS)
+    );
+  }
+
   private buildScenePositions(): void {
     const observerM = DEFAULT_RAIN_FIELD_OPTIONS.observerPositionM;
-    const origin = opticalOrigin();
+    const origin = defaultOpticalOrigin();
     for (const droplet of this.droplets) {
       const offset = droplet.index * 3;
       this.scenePositions[offset] =
@@ -352,11 +426,20 @@ export class RainbowOverview {
         origin.y + (droplet.positionM.y - observerM.y) * METERS_TO_SCENE_UNITS;
       this.scenePositions[offset + 2] =
         origin.z + (droplet.positionM.z - observerM.z) * METERS_TO_SCENE_UNITS;
+    }
+    this.updateSightlineDirections();
+  }
+
+  private updateSightlineDirections(): void {
+    for (const droplet of this.droplets) {
+      const offset = droplet.index * 3;
       const direction = new THREE.Vector3(
-        droplet.positionM.x - observerM.x,
-        droplet.positionM.y - observerM.y,
-        droplet.positionM.z - observerM.z
-      ).normalize();
+        droplet.positionM.x - this.observerPositionM.x,
+        droplet.positionM.y - this.observerPositionM.y,
+        droplet.positionM.z - this.observerPositionM.z
+      );
+      if (direction.lengthSq() < 1e-12) direction.set(0, 1, 0);
+      else direction.normalize();
       this.sightlineDirections[offset] = direction.x;
       this.sightlineDirections[offset + 1] = direction.y;
       this.sightlineDirections[offset + 2] = direction.z;
@@ -393,11 +476,11 @@ export class RainbowOverview {
     );
     eye.name = "observer-optical-origin";
     observer.add(eye);
-    this.fixed.add(observer);
+    this.observerFrame.add(observer);
   }
 
   private addHorizon(): void {
-    const origin = opticalOrigin();
+    const origin = defaultOpticalOrigin();
     const points: THREE.Vector3[] = [];
     for (let step = 0; step <= 160; step += 1) {
       const angle = (step / 160) * Math.PI * 2;
@@ -412,7 +495,7 @@ export class RainbowOverview {
       new THREE.LineBasicMaterial({ color: 0x33474f, transparent: true, opacity: 0.55 })
     );
     horizon.name = "observer-celestial-horizon";
-    this.fixed.add(horizon);
+    this.observerFrame.add(horizon);
   }
 
   private addObserverSkyDome(): void {
@@ -451,9 +534,9 @@ export class RainbowOverview {
     });
     const sky = new THREE.Mesh(geometry, this.skyMaterial);
     sky.name = "observer-sky-radiance-background";
-    sky.position.copy(opticalOrigin());
+    sky.position.copy(defaultOpticalOrigin());
     sky.renderOrder = -100;
-    this.fixed.add(sky);
+    this.observerFrame.add(sky);
   }
 
   private addFixedRainField(): void {
@@ -514,7 +597,11 @@ export class RainbowOverview {
     if (!droplet) throw new Error("rain droplet is unavailable");
     return observeRainDroplet(
       droplet,
-      DEFAULT_RAIN_FIELD_OPTIONS.observerPositionM,
+      {
+        x: this.observerPositionM.x,
+        y: this.observerPositionM.y,
+        z: this.observerPositionM.z
+      },
       { x: sun.x, y: sun.y, z: sun.z },
       this.order
     );
@@ -531,7 +618,7 @@ export class RainbowOverview {
       this.selectedIndex = 0;
       return;
     }
-    const origin = opticalOrigin();
+    const origin = this.opticalOrigin();
     let bestIndex = contributors[0] ?? 0;
     let bestScore = -Infinity;
     for (const index of contributors) {
@@ -693,7 +780,7 @@ export class RainbowOverview {
   private addSun(sun: THREE.Vector3): void {
     const sunGroup = new THREE.Group();
     sunGroup.name = "sun-disc-and-glow";
-    const origin = opticalOrigin();
+    const origin = this.opticalOrigin();
     sunGroup.position.copy(origin).addScaledVector(sun, SKY_RADIUS);
     sunGroup.add(
       new THREE.Mesh(
@@ -726,7 +813,7 @@ export class RainbowOverview {
   }
 
   private addAntisolarAxis(sun: THREE.Vector3, antisolar: THREE.Vector3): void {
-    const origin = opticalOrigin();
+    const origin = this.opticalOrigin();
     const axis = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         origin.clone().addScaledVector(sun, SKY_RADIUS),
@@ -760,7 +847,7 @@ export class RainbowOverview {
       for (let step = 0; step < 256; step += 1) {
         const phase = (step / 256) * Math.PI * 2;
         points.push(
-          opticalOrigin().addScaledVector(
+          this.opticalOrigin().addScaledVector(
             directionOnCone(antisolar, first, second, radius, phase),
             SKY_RADIUS
           )
@@ -800,8 +887,8 @@ export class RainbowOverview {
       );
       const guide = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([
-          opticalOrigin(),
-          opticalOrigin().addScaledVector(direction, SKY_RADIUS)
+          this.opticalOrigin(),
+          this.opticalOrigin().addScaledVector(direction, SKY_RADIUS)
         ]),
         new THREE.LineBasicMaterial({ color: 0x8ea5ab, transparent: true, opacity: 0.07 })
       );
@@ -823,7 +910,7 @@ export class RainbowOverview {
     const colors = new Float32Array(vertexCount * 3);
     const alphas = new Float32Array(vertexCount);
     const indices: number[] = [];
-    const origin = opticalOrigin();
+    const origin = this.opticalOrigin();
 
     for (let phaseIndex = 0; phaseIndex <= phaseSegments; phaseIndex += 1) {
       const phase = (phaseIndex / phaseSegments) * Math.PI * 2;
@@ -976,16 +1063,27 @@ export class RainbowOverview {
   private addSampleContributorSightlines(): void {
     const contributors = this.visibleContributorIndices();
     const points: THREE.Vector3[] = [];
-    const maximumLines = 30;
+    const colors: number[] = [];
+    const maximumLines = 48;
     const stride = Math.max(1, Math.floor(contributors.length / maximumLines));
     for (let position = 0; position < contributors.length && points.length < maximumLines * 2; position += stride) {
       const index = contributors[position];
       if (index === undefined) continue;
-      points.push(opticalOrigin(), this.scenePosition(index));
+      points.push(this.opticalOrigin(), this.scenePosition(index));
+      const observation = this.contributorObservations.get(index);
+      const lower = observation ? SPECTRAL_SAMPLES[observation.lowerSampleIndex] : undefined;
+      const upper = observation ? SPECTRAL_SAMPLES[observation.upperSampleIndex] : undefined;
+      const color = new THREE.Color(lower?.color ?? "#ffffff").lerp(
+        new THREE.Color(upper?.color ?? lower?.color ?? "#ffffff"),
+        observation?.colorMix ?? 0
+      );
+      colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
     }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     const sightlines = new THREE.LineSegments(
-      new THREE.BufferGeometry().setFromPoints(points),
-      new THREE.LineBasicMaterial({ color: 0x72dce4, transparent: true, opacity: 0.055 })
+      geometry,
+      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.2 })
     );
     sightlines.name = "sample-eye-to-contributing-droplet-directions";
     this.optical.add(sightlines);

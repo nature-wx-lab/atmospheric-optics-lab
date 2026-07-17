@@ -4,12 +4,34 @@ import {
   SPECTRAL_SAMPLES,
   findStationaryRay,
   fresnelPower,
+  iapwsWaterRefractiveIndex,
   prismMinimumDeviationDeg,
   rainbowAngleRange,
+  referenceDryAirRefractiveIndex,
+  referenceRelativeWaterIndex,
   reflect2D,
   refract2D,
-  traceDropletRay
+  traceDropletRay,
+  traceDropletRayAtImpact
 } from "../src/physics/rainbow.ts";
+
+const sinDeg = (angleDeg: number): number => Math.sin(angleDeg * Math.PI / 180);
+
+test("IAPWS water and reference-air dispersion produce reproducible relative indices", () => {
+  // IAPWS R9-97 Table 3: 0.589 µm, 0 °C and approximately the 0.1 MPa density.
+  assert.ok(Math.abs(iapwsWaterRefractiveIndex(589, 0, 999.842) - 1.334344) < 1e-6);
+  // Ciddor (1996), Table 1: 633 nm, 20 °C, 100 kPa dry air with 450 ppm CO2.
+  assert.ok(
+    Math.abs((referenceDryAirRefractiveIndex(633, 20, 100_000) - 1) * 1e8 - 26_824.4) < 0.1
+  );
+  for (const sample of SPECTRAL_SAMPLES) {
+    assert.ok(Math.abs(sample.vacuumWaterIndex - iapwsWaterRefractiveIndex(sample.wavelengthNm)) < 1e-15);
+    assert.ok(Math.abs(sample.airIndex - referenceDryAirRefractiveIndex(sample.wavelengthNm)) < 1e-15);
+    assert.ok(Math.abs(sample.waterIndex - referenceRelativeWaterIndex(sample.wavelengthNm)) < 1e-15);
+    assert.ok(sample.vacuumWaterIndex > sample.waterIndex);
+    assert.ok(sample.airIndex > 1);
+  }
+});
 
 test("reflection preserves length and mirrors the normal component", () => {
   const reflected = reflect2D({ x: 1, y: -1 }, { x: 0, y: 1 });
@@ -103,6 +125,94 @@ test("each internal reflection has a transmitted loss branch", () => {
   const middle = SPECTRAL_SAMPLES[3]!;
   assert.equal(traceDropletRay(middle.waterIndex, 1).lossBranches.length, 1);
   assert.equal(traceDropletRay(middle.waterIndex, 2).lossBranches.length, 2);
+});
+
+test("every traced interface satisfies Snell refraction or the reflection law", () => {
+  for (const sample of SPECTRAL_SAMPLES) {
+    for (const order of [1, 2] as const) {
+      const stationaryImpact = findStationaryRay(sample.waterIndex, order).impactParameter;
+      for (const impact of [0, 0.35, stationaryImpact, 0.92]) {
+        const trace = traceDropletRayAtImpact(sample.waterIndex, order, impact);
+        assert.equal(trace.interfaceEvents.length, order + 2);
+        assert.equal(
+          trace.interfaceEvents.filter((event) => event.kind === "internal-reflection").length,
+          order
+        );
+
+        for (const event of trace.interfaceEvents) {
+          assert.ok(Math.abs(Math.hypot(event.point.x, event.point.y) - 1) < 1e-12);
+          assert.ok(Math.abs(Math.hypot(event.outwardNormal.x, event.outwardNormal.y) - 1) < 1e-12);
+          assert.ok(Math.abs(Math.hypot(event.incident.x, event.incident.y) - 1) < 1e-12);
+          assert.ok(Math.abs(Math.hypot(event.outgoing.x, event.outgoing.y) - 1) < 1e-12);
+          assert.ok(event.incidenceDeg >= 0 && event.incidenceDeg <= 90);
+          assert.ok(event.outgoingDeg >= 0 && event.outgoingDeg <= 90);
+          const incidentNormal =
+            event.incident.x * event.outwardNormal.x +
+            event.incident.y * event.outwardNormal.y;
+          const outgoingNormal =
+            event.outgoing.x * event.outwardNormal.x +
+            event.outgoing.y * event.outwardNormal.y;
+          if (event.kind === "entry-refraction") {
+            assert.ok(incidentNormal < 0 && outgoingNormal < 0);
+          } else if (event.kind === "internal-reflection") {
+            assert.ok(incidentNormal > 0 && outgoingNormal < 0);
+            assert.ok(Math.abs(event.incidenceDeg - event.outgoingDeg) < 1e-12);
+            assert.equal(event.refractiveIndexFrom, sample.waterIndex);
+            assert.equal(event.refractiveIndexTo, 1);
+          } else {
+            assert.ok(incidentNormal > 0 && outgoingNormal > 0);
+          }
+          if (event.kind !== "internal-reflection") {
+            const incidentTangential =
+              event.refractiveIndexFrom * sinDeg(event.incidenceDeg);
+            const outgoingTangential =
+              event.refractiveIndexTo * sinDeg(event.outgoingDeg);
+            assert.ok(
+              Math.abs(incidentTangential - outgoingTangential) < 2e-12,
+              `${event.kind} must conserve the tangential wave-vector component`
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
+test("one white incident beam shares an entry point before wavelength-dependent separation", () => {
+  for (const order of [1, 2] as const) {
+    const sharedImpact = findStationaryRay(SPECTRAL_SAMPLES[3]!.waterIndex, order)
+      .impactParameter;
+    const traces = SPECTRAL_SAMPLES.map((sample) =>
+      traceDropletRayAtImpact(sample.waterIndex, order, sharedImpact)
+    );
+    const referenceStart = traces[0]!.points[0]!;
+    const referenceEntry = traces[0]!.points[1]!;
+    for (const trace of traces) {
+      assert.deepEqual(trace.points[0], referenceStart);
+      assert.deepEqual(trace.points[1], referenceEntry);
+      assert.equal(trace.impactParameter, sharedImpact);
+    }
+    assert.ok(
+      traces[0]!.points[2]!.y !== traces.at(-1)!.points[2]!.y,
+      "red and violet paths must separate only after entering the drop"
+    );
+    assert.ok(
+      Math.abs(traces[0]!.outgoing.y - traces.at(-1)!.outgoing.y) > 1e-4,
+      "dispersion must produce different exit directions"
+    );
+  }
+});
+
+test("the traced outgoing vector reproduces the analytic rainbow scattering angle", () => {
+  for (const order of [1, 2] as const) {
+    for (const sample of SPECTRAL_SAMPLES) {
+      const trace = traceDropletRay(sample.waterIndex, order);
+      const scatteringDeg = Math.acos(Math.max(-1, Math.min(1, trace.outgoing.x))) *
+        180 / Math.PI;
+      assert.ok(Math.abs(scatteringDeg - trace.scatteringDeg) < 2e-12);
+      assert.ok(Math.abs(180 - scatteringDeg - trace.radiusDeg) < 2e-12);
+    }
+  }
 });
 
 test("hexagonal ice prism minimum deviations support 22 and 46 degree halos", () => {

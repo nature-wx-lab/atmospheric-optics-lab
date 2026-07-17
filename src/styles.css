@@ -377,6 +377,52 @@ input[type="range"]:disabled {
   line-height: 1.45;
 }
 
+.wavelength-selection-actions {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 6px;
+}
+
+.wavelength-selection-actions > span,
+.wavelength-selection-actions small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
+.wavelength-selection-actions > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.wavelength-selection-actions button,
+.mobile-wavelength-dock button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 5px 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: #102329;
+  font: inherit;
+  font-size: 0.61rem;
+  cursor: pointer;
+}
+
+.wavelength-selection-actions button i {
+  width: 7px;
+  height: 7px;
+  display: inline-block;
+  margin-right: 3px;
+  border-radius: 50%;
+  background: #d7e4e6;
+}
+
+[data-select-wavelength="656.3"] i { background: #ff5045; }
+[data-select-wavelength="530"] i { background: #58df7a; }
+[data-select-wavelength="404.7"] i { background: #916cff; }
+
 .drop-selection-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -393,6 +439,15 @@ input[type="range"]:disabled {
   color: var(--text);
   background: #102329;
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+#clear-drop-selection {
+  grid-column: 1 / -1;
 }
 
 .drop-id-actions {
@@ -460,6 +515,22 @@ input[type="range"]:disabled {
   margin-bottom: 2px;
 }
 
+.free-move-note {
+  min-height: 46px;
+  padding: 7px;
+  border-top: 1px solid var(--line);
+  color: #c8dcdf;
+  background: #0b191e;
+}
+
+.semantic-zoom-control[hidden],
+.rainbow-selection-controls[hidden],
+.free-move-note[hidden],
+.mobile-zoom-dock label[hidden],
+.mobile-free-move-note[hidden] {
+  display: none !important;
+}
+
 .zoom-landmarks {
   display: flex;
   justify-content: space-between;
@@ -504,7 +575,13 @@ input[type="range"]:disabled {
   display: none;
 }
 
+.mobile-wavelength-dock {
+  display: none;
+}
+
 .drop-selection-actions[hidden],
+.wavelength-selection-actions[hidden],
+.mobile-wavelength-dock[hidden],
 .mobile-drop-dock[hidden],
 .mobile-drop-id-dock[hidden] {
   display: none;
@@ -574,7 +651,7 @@ input[type="range"]:disabled {
   top: 29px;
   right: 10px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   padding: 2px;
   border: 1px solid rgba(104, 145, 154, 0.72);
   border-radius: 7px;
@@ -589,7 +666,8 @@ input[type="range"]:disabled {
 
 .perspective-switch button {
   min-height: 34px;
-  padding: 6px 9px;
+  max-width: 94px;
+  padding: 6px 7px;
   border: 0;
   border-radius: 5px;
   color: #9fb5ba;
@@ -880,7 +958,7 @@ input[type="range"]:disabled {
     width: 100%;
     max-width: 100%;
     min-height: 0;
-    grid-template-rows: auto auto auto auto 320px auto;
+    grid-template-rows: auto auto auto auto auto 320px auto;
     padding: 8px;
     overflow: hidden;
   }
@@ -917,6 +995,13 @@ input[type="range"]:disabled {
     font-size: 0.68rem;
   }
 
+  .mobile-free-move-note {
+    min-width: 0;
+    color: #cbdadc;
+    font-size: 0.68rem;
+    text-align: center;
+  }
+
   .mobile-zoom-dock label span {
     display: flex;
     justify-content: space-between;
@@ -937,6 +1022,17 @@ input[type="range"]:disabled {
     padding: 0 0 7px;
   }
 
+  .mobile-wavelength-dock {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+    padding: 0 0 7px;
+  }
+
+  .mobile-wavelength-dock button {
+    font-size: 0.64rem;
+  }
+
   .mobile-drop-dock span {
     min-width: 0;
     color: #b9ced1;
@@ -946,6 +1042,11 @@ input[type="range"]:disabled {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mobile-drop-dock #mobile-clear-drop-selection {
+    min-width: 0;
+    padding: 0 4px;
   }
 
   .mobile-drop-id-dock {
@@ -1032,7 +1133,7 @@ input[type="range"]:disabled {
 
   .scene-panel {
     min-height: 0;
-    grid-template-rows: auto auto auto auto 180px auto;
+    grid-template-rows: auto auto auto auto auto 180px auto;
   }
 
   .scene-heading {
@@ -1113,7 +1214,7 @@ input[type="range"]:disabled {
   }
 
   .scene-panel {
-    grid-template-rows: auto auto auto auto 300px auto;
+    grid-template-rows: auto auto auto auto auto 300px auto;
   }
 
   .canvas-overlay {

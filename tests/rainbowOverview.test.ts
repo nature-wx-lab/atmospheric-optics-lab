@@ -413,3 +413,148 @@ test("observer-eye rainbow taps prefer a contributing ID over overlapping gray d
     overview.dispose();
   }
 });
+
+test("journey starts unselected and never reveals a hidden default target", () => {
+  const journey = new RainbowJourney();
+  try {
+    assert.equal(journey.hasExplicitSelection(), false);
+    assert.equal(journey.getFocusSnapshot().explicitlySelected, false);
+    journey.applyZoom(rainbowZoomFrame(1));
+    assert.equal(journey.group.getObjectByName("droplet-detail")?.visible, false);
+    assert.equal(
+      journey.group.getObjectByName("selected-existing-rain-field-droplet")?.visible,
+      false
+    );
+    assert.equal(
+      journey.group.getObjectByName("white-sunlight-before-selected-rain-drop")?.visible,
+      false
+    );
+  } finally {
+    journey.dispose();
+  }
+});
+
+test("red, green, and blue-violet controls select distinct observer-reaching drop IDs", () => {
+  const journey = new RainbowJourney();
+  try {
+    const requested = [656.3, 530, 404.7] as const;
+    const selected = requested.map((wavelength) => {
+      const snapshot = journey.selectContributorNearestWavelength(wavelength);
+      assert.ok(snapshot, `${wavelength} nm should have a representative contributor`);
+      assert.equal(snapshot.contributes, true);
+      assert.equal(snapshot.rayReachesObserver, true);
+      assert.equal(snapshot.explicitlySelected, true);
+      assert.ok(snapshot.dominantWavelengthNm !== null);
+      assert.ok(Math.abs(snapshot.dominantWavelengthNm - wavelength) < 8);
+      return snapshot;
+    });
+    assert.equal(new Set(selected.map((snapshot) => snapshot.id)).size, selected.length);
+    assert.ok(selected[0]!.dominantWavelengthNm! > selected[1]!.dominantWavelengthNm!);
+    assert.ok(selected[1]!.dominantWavelengthNm! > selected[2]!.dominantWavelengthNm!);
+
+    const nextRed = journey.selectContributorNearestWavelength(656.3, 1);
+    assert.ok(nextRed);
+    assert.equal(nextRed.contributes, true);
+    assert.notEqual(nextRed.id, selected[0]!.id);
+  } finally {
+    journey.dispose();
+  }
+});
+
+test("moving the observer preserves fixed drops and recomputes observer-dependent contributors", () => {
+  const journey = new RainbowJourney();
+  try {
+    const selected = journey.selectContributorNearestWavelength(530);
+    assert.ok(selected);
+    const field = journey.group.getObjectByName("fixed-rain-field-60000-selectable-droplets");
+    assert.ok(field instanceof THREE.Points);
+    const positions = field.geometry.getAttribute("position");
+    const fixedBefore = new THREE.Vector3().fromBufferAttribute(positions, selected.index);
+    const observerBefore = journey.getObserverPositionM();
+    const sceneObserverBefore = journey.getObserverScenePosition();
+    const contributorsBefore = selected.contributingDroplets;
+
+    journey.setObserverPositionM(observerBefore.clone().add(new THREE.Vector3(24, 0, -11)));
+    const moved = journey.getFocusSnapshot();
+    const fixedAfter = new THREE.Vector3().fromBufferAttribute(positions, selected.index);
+    const sceneObserverAfter = journey.getObserverScenePosition();
+    assert.equal(moved.id, selected.id);
+    assert.equal(moved.index, selected.index);
+    assert.ok(moved.physicalPositionM.distanceTo(selected.physicalPositionM) < 1e-12);
+    assert.ok(moved.position.distanceTo(selected.position) < 1e-12);
+    assert.ok(fixedAfter.distanceTo(fixedBefore) < 1e-12);
+    assert.ok(sceneObserverAfter.distanceTo(sceneObserverBefore) > 1);
+    assert.ok(
+      moved.contributingDroplets !== contributorsBefore ||
+        moved.contributes !== selected.contributes ||
+        moved.dominantWavelengthNm !== selected.dominantWavelengthNm
+    );
+    assert.ok(
+      moved.outgoingDirection.angleTo(sceneObserverAfter.clone().sub(moved.position)) < 1e-10
+    );
+
+    journey.group.updateMatrixWorld(true);
+    const eye = journey.group.getObjectByName("observer-optical-origin");
+    assert.ok(eye);
+    const eyeWorld = eye.getWorldPosition(new THREE.Vector3());
+    assert.ok(eyeWorld.distanceTo(sceneObserverAfter) < 1e-12);
+  } finally {
+    journey.dispose();
+  }
+});
+
+test("the detailed drop uses one white incident segment and seven paths starting at one boundary point", () => {
+  const journey = new RainbowJourney();
+  try {
+    assert.ok(journey.selectContributorNearestWavelength(530));
+    journey.applyZoom(rainbowZoomFrame(1));
+    const white = journey.group.getObjectByName(
+      "one-overlapping-white-sunlight-ray-before-water-entry"
+    );
+    assert.ok(white instanceof THREE.Line);
+    const whitePositions = white.geometry.getAttribute("position");
+    assert.equal(whitePositions.count, 2);
+    const entry = new THREE.Vector3().fromBufferAttribute(whitePositions, 1);
+
+    const spectralLines: THREE.Line[] = [];
+    journey.group.traverse((object) => {
+      if (
+        object instanceof THREE.Line &&
+        object.name.startsWith("same-white-beam-dispersed-after-entry-")
+      ) {
+        spectralLines.push(object);
+      }
+    });
+    assert.equal(spectralLines.length, 7);
+    for (const line of spectralLines) {
+      const firstAfterBoundary = new THREE.Vector3().fromBufferAttribute(
+        line.geometry.getAttribute("position"),
+        0
+      );
+      assert.ok(firstAfterBoundary.distanceTo(entry) < 1e-12);
+    }
+
+    const selectedRay = journey.group.children
+      .flatMap((child) => {
+        const matches: THREE.Object3D[] = [];
+        child.traverse((object) => matches.push(object));
+        return matches;
+      })
+      .find((object) => object.name.startsWith("selected-drop-caustic-ray-to-observer-"));
+    assert.ok(selectedRay instanceof THREE.Line);
+    assert.ok(
+      new THREE.Vector3()
+        .fromBufferAttribute(selectedRay.geometry.getAttribute("position"), 0)
+        .distanceTo(entry) < 1e-12
+    );
+
+    const worldWhite = journey.group.getObjectByName("white-sunlight-before-selected-rain-drop");
+    assert.ok(worldWhite instanceof THREE.Line);
+    journey.setObserverView(true);
+    assert.equal(worldWhite.visible, false);
+    journey.setObserverView(false);
+    assert.equal(worldWhite.visible, true);
+  } finally {
+    journey.dispose();
+  }
+});

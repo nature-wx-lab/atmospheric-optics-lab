@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   SPECTRAL_SAMPLES,
   traceDropletRay,
+  traceDropletRayAtImpact,
   type DropletRayTrace,
   type RainbowOrder
 } from "../physics/rainbow";
@@ -12,7 +13,7 @@ import {
 } from "../physics/semanticZoom";
 
 const DROPLET_RADIUS = 3.1;
-const REPRESENTATIVE_SAMPLE_INDEX = 3;
+const DEFAULT_SAMPLE_INDEX = 3;
 const SEGMENT_SUBDIVISIONS = 22;
 
 export interface DropletRepresentativeRay {
@@ -72,12 +73,13 @@ export class DropletDetail {
   private order: RainbowOrder = 1;
   private frame: RainbowZoomFrame = rainbowZoomFrame(0);
   private representative: DropletRepresentativeRay = {
-    wavelengthNm: SPECTRAL_SAMPLES[REPRESENTATIVE_SAMPLE_INDEX]?.wavelengthNm ?? 530,
-    refractiveIndex: SPECTRAL_SAMPLES[REPRESENTATIVE_SAMPLE_INDEX]?.waterIndex ?? 1.3352,
-    color: SPECTRAL_SAMPLES[REPRESENTATIVE_SAMPLE_INDEX]?.color ?? "#52e47a",
+    wavelengthNm: SPECTRAL_SAMPLES[DEFAULT_SAMPLE_INDEX]?.wavelengthNm ?? 530,
+    refractiveIndex: SPECTRAL_SAMPLES[DEFAULT_SAMPLE_INDEX]?.waterIndex ?? 1.3352,
+    color: SPECTRAL_SAMPLES[DEFAULT_SAMPLE_INDEX]?.color ?? "#52e47a",
     reachesObserver: true
   };
   private readonly surfaceMaterials: Array<{ material: THREE.Material; baseOpacity: number }> = [];
+  private incomingMaterial: THREE.LineBasicMaterial | null = null;
   private representativeGeometry: THREE.BufferGeometry | null = null;
   private representativeMaterial: THREE.LineBasicMaterial | null = null;
   private representativeVertexCount = 0;
@@ -136,6 +138,9 @@ export class DropletDetail {
       );
       this.representativeMaterial.opacity = 0.96 * frame.representativeRayOpacity;
     }
+    if (this.incomingMaterial) {
+      this.incomingMaterial.opacity = 0.96 * frame.representativeRayOpacity;
+    }
     for (const material of this.spectralMaterials) {
       material.opacity = 0.78 * frame.spectralOpacity;
     }
@@ -155,6 +160,7 @@ export class DropletDetail {
     this.representativeDirty = false;
     disposeGroup(this.group);
     this.surfaceMaterials.length = 0;
+    this.incomingMaterial = null;
     this.representativeGeometry = null;
     this.representativeMaterial = null;
     this.representativeVertexCount = 0;
@@ -162,6 +168,7 @@ export class DropletDetail {
     this.normalMaterials.length = 0;
     this.lossBranchMaterials.length = 0;
     this.addDroplet();
+    this.addIncomingWhiteRay();
     this.addRepresentativeRay();
     this.addSpectralRays();
     this.addReferenceNormal();
@@ -208,18 +215,44 @@ export class DropletDetail {
     this.surfaceMaterials.push({ material: outlineMaterial, baseOpacity: 0.24 });
   }
 
+  private representativeTrace(): DropletRayTrace {
+    return traceDropletRay(this.representative.refractiveIndex, this.order);
+  }
+
+  private addIncomingWhiteRay(): void {
+    const trace = this.representativeTrace();
+    const start = trace.points[0];
+    const entry = trace.points[1];
+    if (!start || !entry) return;
+    const material = new THREE.LineBasicMaterial({
+      color: 0xfffbf2,
+      transparent: true,
+      opacity: 0,
+      depthTest: false
+    });
+    const geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(start.x * DROPLET_RADIUS, start.y * DROPLET_RADIUS, 0),
+      new THREE.Vector3(entry.x * DROPLET_RADIUS, entry.y * DROPLET_RADIUS, 0)
+    ]);
+    const line = new THREE.Line(geometry, material);
+    line.name = "one-overlapping-white-sunlight-ray-before-water-entry";
+    line.renderOrder = 5;
+    this.group.add(line);
+    this.incomingMaterial = material;
+  }
+
   private addRepresentativeRay(): void {
-    const trace = traceDropletRay(this.representative.refractiveIndex, this.order);
-    const sampled = resamplePolyline(rayPoints(trace, 0));
+    const trace = this.representativeTrace();
+    const sampled = resamplePolyline(
+      rayPoints({ ...trace, points: trace.points.slice(1) }, 0)
+    );
     const geometry = new THREE.BufferGeometry().setFromPoints(sampled.points);
-    const incomingColor = new THREE.Color(0xffdd73);
     const selectedColor = new THREE.Color(this.representative.color);
     const colors = new Float32Array(sampled.points.length * 3);
-    sampled.segmentIndices.forEach((segment, index) => {
-      const color = segment === 0 ? incomingColor : selectedColor;
-      colors[index * 3] = color.r;
-      colors[index * 3 + 1] = color.g;
-      colors[index * 3 + 2] = color.b;
+    sampled.segmentIndices.forEach((_segment, index) => {
+      colors[index * 3] = selectedColor.r;
+      colors[index * 3 + 1] = selectedColor.g;
+      colors[index * 3 + 2] = selectedColor.b;
     });
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geometry.setDrawRange(0, 2);
@@ -241,10 +274,9 @@ export class DropletDetail {
   }
 
   private addSpectralRays(): void {
-    SPECTRAL_SAMPLES.forEach((sample, index) => {
-      if (index === REPRESENTATIVE_SAMPLE_INDEX) return;
-      const trace = traceDropletRay(sample.waterIndex, this.order);
-      const depth = (index - (SPECTRAL_SAMPLES.length - 1) / 2) * 0.035;
+    const sharedImpact = this.representativeTrace().impactParameter;
+    SPECTRAL_SAMPLES.forEach((sample) => {
+      const trace = traceDropletRayAtImpact(sample.waterIndex, this.order, sharedImpact);
       const material = new THREE.LineBasicMaterial({
         color: sample.color,
         transparent: true,
@@ -252,10 +284,12 @@ export class DropletDetail {
         depthTest: false
       });
       const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(rayPoints(trace, depth)),
+        new THREE.BufferGeometry().setFromPoints(
+          rayPoints({ ...trace, points: trace.points.slice(1) }, 0)
+        ),
         material
       );
-      line.name = `${sample.label}-${sample.wavelengthNm}nm-order-${this.order}`;
+      line.name = `same-white-beam-dispersed-after-entry-${sample.label}-${sample.wavelengthNm}nm-order-${this.order}`;
       line.renderOrder = 4;
       this.group.add(line);
       this.spectralMaterials.push(material);
