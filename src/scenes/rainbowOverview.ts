@@ -16,11 +16,11 @@ import {
 import { buildRainbowRadianceProfile } from "../physics/rainbowRadiance";
 import {
   OBSERVER_OPTICAL_ORIGIN,
+  RAIN_FIELD_METERS_TO_SCENE_UNITS,
   type RainbowZoomFrame
 } from "../physics/semanticZoom";
 
 const SKY_RADIUS = 14.5;
-const METERS_TO_SCENE_UNITS = 0.046;
 
 function createSoftPointTexture(size = 32): THREE.DataTexture {
   const data = new Uint8Array(size * size * 4);
@@ -411,7 +411,7 @@ export class RainbowOverview {
         this.observerPositionM.x - initial.x,
         this.observerPositionM.y - initial.y,
         this.observerPositionM.z - initial.z
-      ).multiplyScalar(METERS_TO_SCENE_UNITS)
+      ).multiplyScalar(RAIN_FIELD_METERS_TO_SCENE_UNITS)
     );
   }
 
@@ -421,11 +421,11 @@ export class RainbowOverview {
     for (const droplet of this.droplets) {
       const offset = droplet.index * 3;
       this.scenePositions[offset] =
-        origin.x + (droplet.positionM.x - observerM.x) * METERS_TO_SCENE_UNITS;
+        origin.x + (droplet.positionM.x - observerM.x) * RAIN_FIELD_METERS_TO_SCENE_UNITS;
       this.scenePositions[offset + 1] =
-        origin.y + (droplet.positionM.y - observerM.y) * METERS_TO_SCENE_UNITS;
+        origin.y + (droplet.positionM.y - observerM.y) * RAIN_FIELD_METERS_TO_SCENE_UNITS;
       this.scenePositions[offset + 2] =
-        origin.z + (droplet.positionM.z - observerM.z) * METERS_TO_SCENE_UNITS;
+        origin.z + (droplet.positionM.z - observerM.z) * RAIN_FIELD_METERS_TO_SCENE_UNITS;
     }
     this.updateSightlineDirections();
   }
@@ -679,10 +679,12 @@ export class RainbowOverview {
     }
 
     const rainOpacity = this.observerView
-      ? 0.022 * this.resolvedFieldOpacity
+      ? (0.022 + 0.058 * this.resolvedFieldOpacity) * this.resolvedFieldOpacity
       : 0.25;
     if (this.rainMaterial) {
-      this.rainMaterial.size = this.observerView ? 1.2 : 0.068;
+      this.rainMaterial.size = this.observerView
+        ? 1.2 + 1.5 * this.resolvedFieldOpacity
+        : 0.068;
       this.rainMaterial.sizeAttenuation = !this.observerView;
       this.rainMaterial.fog = !this.observerView;
       this.rainMaterial.opacity = rainOpacity * this.journeyOpacity;
@@ -700,7 +702,9 @@ export class RainbowOverview {
       ? 0.56 * this.resolvedContributorOpacity
       : 0.98;
     if (this.contributorCoreMaterial) {
-      this.contributorCoreMaterial.size = this.observerView ? 1.5 : 2.7;
+      this.contributorCoreMaterial.size = this.observerView
+        ? 1.5 + 0.9 * this.resolvedContributorOpacity
+        : 2.7;
       this.contributorCoreMaterial.sizeAttenuation = false;
       this.contributorCoreMaterial.opacity = coreOpacity * this.journeyOpacity;
       this.contributorCoreMaterial.needsUpdate = true;

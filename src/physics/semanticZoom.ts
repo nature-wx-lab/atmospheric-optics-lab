@@ -33,6 +33,9 @@ export interface RainbowZoomFrame {
 
 export const RAINBOW_CAMERA_FAR = 31.5;
 export const RAINBOW_CAMERA_NEAR = 9.2;
+export const RAIN_FIELD_METERS_TO_SCENE_UNITS = 0.046;
+export const RAIN_FIELD_APPROACH_END = 0.47;
+export const RAIN_FIELD_INSPECTION_TRAVEL_M = 60;
 export const SEMANTIC_FAR_SPAN_M = 300;
 export const SEMANTIC_NEAR_SPAN_M = 0.00035;
 export const OBSERVER_OPTICAL_ORIGIN: Vec3Like = Object.freeze({ x: 0, y: 0.65, z: 0.15 });
@@ -90,6 +93,24 @@ export function progressFromCameraDistance(distance: number): number {
 export function cameraDistanceFromProgress(progress: number): number {
   return RAINBOW_CAMERA_FAR *
     Math.pow(RAINBOW_CAMERA_NEAR / RAINBOW_CAMERA_FAR, clamp01(progress));
+}
+
+/** Inspection-camera travel toward the 80–300 m representative rain shell. */
+export function fieldApproachBlend(progress: number): number {
+  return smoothstep(0.06, RAIN_FIELD_APPROACH_END, clamp01(progress));
+}
+
+export function fieldInspectionTravelM(progress: number): number {
+  return RAIN_FIELD_INSPECTION_TRAVEL_M * fieldApproachBlend(progress);
+}
+
+/** A selected ID cannot steer the camera until the shared rain-field stage ends. */
+export function selectedDropTurnBlend(progress: number): number {
+  return smoothstep(RAIN_FIELD_APPROACH_END, 0.68, clamp01(progress));
+}
+
+export function selectedDropTravelBlend(progress: number): number {
+  return smoothstep(RAIN_FIELD_APPROACH_END, 0.72, clamp01(progress));
 }
 
 export function progressiveDrawCount(reveal: number, vertexCount: number): number {

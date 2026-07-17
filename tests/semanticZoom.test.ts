@@ -3,13 +3,19 @@ import test from "node:test";
 import * as THREE from "three";
 import {
   OBSERVER_OPTICAL_ORIGIN,
+  RAIN_FIELD_APPROACH_END,
+  RAIN_FIELD_INSPECTION_TRAVEL_M,
   RAINBOW_CAMERA_FAR,
   RAINBOW_CAMERA_NEAR,
   cameraDistanceFromProgress,
   chapterForProgress,
+  fieldApproachBlend,
+  fieldInspectionTravelM,
   progressiveDrawCount,
   progressFromCameraDistance,
   rainbowZoomFrame,
+  selectedDropTravelBlend,
+  selectedDropTurnBlend,
   semanticSpanM
 } from "../src/physics/semanticZoom.ts";
 import { RainbowJourney } from "../src/scenes/rainbowJourney.ts";
@@ -91,6 +97,25 @@ test("progressive draw count never hides the complete endpoints", () => {
   assert.equal(progressiveDrawCount(0.5, 100), 51);
   assert.equal(progressiveDrawCount(1, 100), 100);
   assert.equal(progressiveDrawCount(1, 0), 0);
+});
+
+test("rain-field travel is shared before any selected drop can steer the camera", () => {
+  assert.equal(fieldApproachBlend(0), 0);
+  assert.equal(fieldApproachBlend(RAIN_FIELD_APPROACH_END), 1);
+  assert.equal(fieldInspectionTravelM(0), 0);
+  assert.equal(
+    fieldInspectionTravelM(RAIN_FIELD_APPROACH_END),
+    RAIN_FIELD_INSPECTION_TRAVEL_M
+  );
+  for (let step = 0; step <= 470; step += 1) {
+    const progress = step / 1_000;
+    assert.equal(selectedDropTurnBlend(progress), 0);
+    assert.equal(selectedDropTravelBlend(progress), 0);
+  }
+  assert.ok(selectedDropTurnBlend(0.6) > 0);
+  assert.ok(selectedDropTravelBlend(0.6) > 0);
+  assert.equal(selectedDropTurnBlend(1), 1);
+  assert.equal(selectedDropTravelBlend(1), 1);
 });
 
 test("journey uses one optical origin for the eye, sightline, and scattering geometry", () => {

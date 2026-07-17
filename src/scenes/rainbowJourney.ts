@@ -152,7 +152,6 @@ export class RainbowJourney {
       ? frame
       : {
           ...frame,
-          radianceOpacity: Math.max(frame.radianceOpacity, 0.24),
           overviewOpacity: 1,
           focusMarkerOpacity: 0,
           surfaceOpacity: 0,

@@ -370,7 +370,8 @@ test("observer-eye presentation starts with continuous radiance and resolves rea
     assert.ok(glow.material.opacity > 0.07);
     assert.ok(rain.material.opacity > 0);
     assert.ok(rain.material.opacity < glow.material.opacity);
-    assert.ok(glints.material.size <= 1.5);
+    assert.ok(glints.material.size > 1.5);
+    assert.ok(glints.material.size <= 2.4);
     assert.ok(glow.material.size <= 3.6);
     assert.equal(glints.visible, true);
     assert.equal(glow.visible, true);
