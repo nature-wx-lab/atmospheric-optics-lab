@@ -232,6 +232,56 @@ test("every stable ID can be selected even when density hides its point", () => 
   }
 });
 
+test("one 3D world links primary and secondary red and violet rays to distinct real drops", () => {
+  const overview = new RainbowOverview();
+  try {
+    overview.setObserverView(false);
+    const paths = overview.getSnapshot().representativePaths;
+    assert.equal(paths.length, 4);
+    assert.equal(new Set(paths.map((path) => path.dropletId)).size, 4);
+    for (const order of [1, 2] as const) {
+      const orderPaths = paths.filter((path) => path.order === order);
+      assert.equal(orderPaths.length, 2);
+      const wavelengths = orderPaths.map((path) => path.wavelengthNm).sort((a, b) => a - b);
+      assert.ok((wavelengths[0] ?? Infinity) < 460);
+      assert.ok((wavelengths[1] ?? -Infinity) > 620);
+      const violet = orderPaths.reduce((first, second) =>
+        first.wavelengthNm < second.wavelengthNm ? first : second
+      );
+      const red = orderPaths.reduce((first, second) =>
+        first.wavelengthNm > second.wavelengthNm ? first : second
+      );
+      if (order === 1) {
+        assert.ok(red.apparentRadiusDeg > violet.apparentRadiusDeg);
+      } else {
+        assert.ok(red.apparentRadiusDeg < violet.apparentRadiusDeg);
+      }
+      for (const path of orderPaths) {
+        assert.ok(path.dropletPosition.distanceTo(path.observerPosition) > 3);
+      }
+    }
+    assert.ok(
+      overview.group.getObjectByName(
+        "alexanders-dark-band-between-primary-and-secondary-cones"
+      )
+    );
+    assert.ok(overview.group.getObjectByName("representative-physical-ray-paths-order-1"));
+    assert.ok(overview.group.getObjectByName("representative-physical-ray-paths-order-2"));
+    assert.ok(
+      overview.group.getObjectByName(
+        "continuous-relative-radiance-order-1-from-unresolved-rain-field"
+      )
+    );
+    assert.ok(
+      overview.group.getObjectByName(
+        "continuous-relative-radiance-order-2-from-unresolved-rain-field"
+      )
+    );
+  } finally {
+    overview.dispose();
+  }
+});
+
 test("screen picking is contributor-neutral and cycles overlapping candidates in distance order", () => {
   const overview = new RainbowOverview();
   try {
@@ -315,7 +365,7 @@ test("observer-eye presentation starts with continuous radiance and resolves rea
     overview.setObserverView(true);
     overview.setSemanticFrame(rainbowZoomFrame(0));
     const radiance = overview.group.getObjectByName(
-      "continuous-relative-radiance-integrated-from-unresolved-rain-field"
+      "continuous-relative-radiance-order-1-from-unresolved-rain-field"
     );
     const sky = overview.group.getObjectByName("observer-sky-radiance-background");
     const glints = overview.group.getObjectByName(
@@ -379,7 +429,7 @@ test("observer-eye presentation starts with continuous radiance and resolves rea
 
     overview.setObserverView(false);
     assert.equal(overview.group.getObjectByName("observer")?.visible, true);
-    assert.equal(rain.material.sizeAttenuation, true);
+    assert.equal(rain.material.sizeAttenuation, false);
     assert.equal(radiance.material.uniforms.uOpacity?.value, 0);
     assert.equal(radiance.visible, false);
     assert.equal(sky.visible, false);

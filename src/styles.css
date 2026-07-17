@@ -711,6 +711,67 @@ button:disabled {
   bottom: 9px;
 }
 
+.world-legend {
+  position: absolute;
+  z-index: 3;
+  top: 58px;
+  left: 10px;
+  display: grid;
+  gap: 5px;
+  max-width: 210px;
+  padding: 7px 9px;
+  border: 1px solid rgba(104, 145, 154, 0.42);
+  border-radius: 5px;
+  color: #c8d6d9;
+  background: rgba(4, 12, 15, 0.72);
+  font-size: 0.61rem;
+  line-height: 1.25;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+.world-legend[hidden] {
+  display: none;
+}
+
+.world-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.world-legend i {
+  width: 20px;
+  height: 3px;
+  flex: 0 0 auto;
+  border-radius: 1px;
+  background: #fff;
+}
+
+.world-legend .legend-ray-red {
+  background: #ff3f36;
+}
+
+.world-legend .legend-ray-violet {
+  background: #a263ff;
+}
+
+.world-legend .legend-primary {
+  height: 2px;
+  background: #63e6e8;
+}
+
+.world-legend .legend-secondary {
+  height: 2px;
+  background: #f4b760;
+}
+
+.world-legend .legend-dark-band {
+  height: 7px;
+  border: 1px solid #52666c;
+  background: #071014;
+}
+
 .drag-hint {
   color: #8fe2e4;
 }
@@ -1236,6 +1297,14 @@ button:disabled {
   .perspective-switch button {
     padding-inline: 7px;
     font-size: 0.61rem;
+  }
+
+  .world-legend {
+    top: 77px;
+    left: 7px;
+    max-width: 174px;
+    padding: 6px 7px;
+    font-size: 0.54rem;
   }
 
   .canvas-overlay-top span:first-child,

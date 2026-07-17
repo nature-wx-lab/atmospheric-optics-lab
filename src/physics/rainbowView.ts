@@ -24,7 +24,7 @@ function requireFinite(value: number, label: string): number {
 export function defaultObserverLookDirection(
   sunElevationDeg: number,
   sunAzimuthDeg: number,
-  aimElevationDeg = 14
+  aimElevationDeg = 4
 ): Vec3Like {
   const sun = sunDirectionFromAngles(
     requireFinite(sunElevationDeg, "sun elevation"),

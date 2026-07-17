@@ -30,7 +30,7 @@
             <h1>大気光学3Dラボ</h1>
             <span class="status-chip">開発中 β</span>
           </div>
-          <p class="lede">遠景の連続した虹から、代表雨滴1粒の光路まで追う。</p>
+          <p class="lede">太陽・観測者・多数の雨滴・光路を、一つの3D空間で確かめる。</p>
         </div>
         <div class="top-actions" aria-label="表示操作">
           <button id="reset-view" class="button button-quiet" type="button">虹が見える視点</button>
@@ -40,10 +40,10 @@
 
       <nav class="mode-tabs" aria-label="観察モード">
         <button class="mode-tab is-active" type="button" data-view="overview" aria-pressed="true">
-          <span>01</span> 虹の全景
+          <span>01</span> 虹の3D構造
         </button>
         <button class="mode-tab" type="button" data-view="chase" aria-pressed="false">
-          <span>02</span> 虹を追う
+          <span>02</span> 観測者を動かす
         </button>
         <button
           class="mode-tab"
@@ -52,7 +52,7 @@
           aria-pressed="false"
           aria-label="虹の連続ズームを水滴と光路まで進める"
         >
-          <span>03</span> 水滴・光路
+          <span>03</span> 1滴の内部へ
         </button>
         <button class="mode-tab" type="button" data-view="halo" aria-pressed="false">
           <span>04</span> 氷晶とハロ
@@ -72,7 +72,7 @@
               <button class="segment-button is-active" type="button" data-order="1" aria-pressed="true">一次虹</button>
               <button class="segment-button" type="button" data-order="2" aria-pressed="false">二次虹</button>
             </div>
-            <p id="reflection-note" class="control-note">水滴内で1回反射。赤が外側、紫が内側。</p>
+            <p id="reflection-note" class="control-note">主虹と副虹は同じ空間に表示し、ここで詳しく見る次数を選びます。</p>
           </fieldset>
 
           <label id="elevation-control" class="slider-control" for="sun-elevation">
@@ -121,8 +121,8 @@
 
           <div class="operation-card">
             <div id="rainbow-selection-controls" class="rainbow-selection-controls">
-              <strong>追う雨滴を選ぶ</strong>
-              <p>ズームだけでは雨滴を選びません。雨域へ着いた後はズームイン方向で前進し、ズームアウト方向で連続虹へ戻れます。WASD/QEでは雨域内を自由探索できます。「画面の雨滴を選ぶ」を押した時だけ、見えている任意の1滴を選べます。</p>
+              <strong>詳しく見る雨滴を選ぶ</strong>
+              <p>外側3Dでは赤と青紫を目へ返す別々の雨滴を最初から示します。さらに任意の雨滴を選ぶと、その同じIDへ近づき、表面から内部光路まで連続して確認できます。</p>
               <div id="wavelength-selection-actions" class="wavelength-selection-actions" aria-label="この観測点へ届く虹光の代表波長から雨滴を選択">
                 <span>この目へ届く虹光から</span>
                 <div>
@@ -186,7 +186,7 @@
           <div class="scene-heading">
             <div>
               <p id="scene-kicker" class="panel-kicker">RAIN FIELD → RAINBOW</p>
-              <h2 id="scene-title">無数の水滴がつくる「見える角度」</h2>
+              <h2 id="scene-title">太陽・観測者・多数の雨滴を同じ空間で見る</h2>
             </div>
             <div class="scale-readout">
               <span>表示スケール</span>
@@ -247,12 +247,19 @@
               aria-label="虹の観察モード"
             >
               <button
+                type="button"
+                data-rainbow-mode="external"
+                aria-pressed="false"
+              >
+                3D空間を外から
+              </button>
+              <button
                 class="is-active"
                 type="button"
                 data-rainbow-mode="approach"
                 aria-pressed="true"
               >
-                雨域へ接近
+                観測者の目
               </button>
               <button
                 type="button"
@@ -261,17 +268,18 @@
               >
                 観測者を移動
               </button>
-              <button
-                type="button"
-                data-rainbow-mode="external"
-                aria-pressed="false"
-              >
-                光路を外から
-              </button>
             </div>
             <div class="canvas-overlay canvas-overlay-top">
-              <span id="view-state">観察者の目から見える虹</span>
+              <span id="view-state">観測者の目から見える虹</span>
               <span id="fps-state">WebGL 2</span>
+            </div>
+            <div id="world-legend" class="world-legend" aria-label="3D光路の凡例" hidden>
+              <span><i class="legend-ray-white" aria-hidden="true"></i>水面までは白い太陽光</span>
+              <span><i class="legend-ray-red" aria-hidden="true"></i>赤を返す雨滴</span>
+              <span><i class="legend-ray-violet" aria-hidden="true"></i>青紫を返す別の雨滴</span>
+              <span><i class="legend-primary" aria-hidden="true"></i>主虹：内部反射1回</span>
+              <span><i class="legend-secondary" aria-hidden="true"></i>副虹：内部反射2回</span>
+              <span><i class="legend-dark-band" aria-hidden="true"></i>主虹と副虹の間の暗帯</span>
             </div>
             <div class="canvas-overlay canvas-overlay-bottom">
               <span id="drag-hint" class="drag-hint">↔ ドラッグで視線を360°</span>
@@ -283,7 +291,7 @@
             </div>
           </div>
           <p id="semantic-note" class="semantic-note">
-            遠景の連続した相対放射輝度から、固定60,000滴の代表標本、明示的に選んだ同じID、水滴内部へ進む対数的な「意味ズーム」です。未選択時は検査カメラだけが雨域へ進み、到着後もズームアウトすれば視線と位置を連続的に戻して虹の全景へ復帰します。WASD/QEは雨域内の自由移動です。物理的な観測者と寄与計算は動きません。実際の雨滴数・降水量や画面上の実測縮尺を示すものではありません。
+            主虹・副虹、アレキサンダーの暗帯、白い入射光、赤と青紫を別々の雨滴から観測者へ返す光路を同じ座標系で計算しています。外側3Dを回り込み、観測者の目へ切り替え、任意の雨滴へ近づけます。60,000滴は実際の降水量ではなく、角度条件を調べる固定代表標本です。
           </p>
         </section>
 

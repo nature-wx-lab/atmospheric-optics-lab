@@ -21,7 +21,7 @@ test("default observer direction is normalized and points toward the antisolar a
 
   assert.ok(Math.abs(length - 1) < 1e-12);
   assert.ok(antisolarAlignment > 1 - 1e-12);
-  assert.ok(Math.abs(look.y - Math.sin(14 * Math.PI / 180)) < 1e-12);
+  assert.ok(Math.abs(look.y - Math.sin(4 * Math.PI / 180)) < 1e-12);
 });
 
 test("default primary-rainbow horizontal field of view is about 90 degrees", () => {

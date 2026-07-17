@@ -12,7 +12,8 @@ import {
 import { DropletDetail } from "./dropletDetail";
 import {
   RainbowOverview,
-  type RainbowOverviewSelection
+  type RainbowOverviewSelection,
+  type RainbowRepresentativePath
 } from "./rainbowOverview";
 
 export interface FocusDropletSnapshot {
@@ -134,6 +135,10 @@ export class RainbowJourney {
 
   getObserverScenePosition(): THREE.Vector3 {
     return this.overview.getObserverScenePosition();
+  }
+
+  getRepresentativeWorldPaths(): readonly RainbowRepresentativePath[] {
+    return this.overview.getSnapshot().representativePaths;
   }
 
   setVisible(visible: boolean): void {
