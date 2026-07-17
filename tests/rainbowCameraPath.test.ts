@@ -8,11 +8,14 @@ import {
   shouldCaptureDropApproachAnchor
 } from "../src/physics/rainbowCameraPath.ts";
 
+const overviewGazeDirection = new THREE.Vector3(0, 0.2, -1).normalize();
+const fieldGazeDirection = new THREE.Vector3(0.2, 0.1, -1).normalize();
 const path = {
   origin: new THREE.Vector3(0, 0.65, 0.15),
-  pathDirection: new THREE.Vector3(0, 0.2, -1).normalize(),
+  pathDirection: overviewGazeDirection.clone(),
   freeOffset: new THREE.Vector3(0.4, 0.1, -0.2),
-  gazeDirection: new THREE.Vector3(0.2, 0.1, -1).normalize()
+  overviewGazeDirection,
+  fieldGazeDirection
 };
 const selected = {
   endPosition: new THREE.Vector3(8, 4, -10),
@@ -36,6 +39,30 @@ test("free exploration offset resolves continuously instead of appearing as a cu
   const atEnd = inspectionCameraPosition(path, 0.47);
   const atEndWithoutOffset = inspectionCameraPosition(noOffset, 0.47);
   assert.ok(atEnd.clone().sub(atEndWithoutOffset).distanceTo(path.freeOffset) < 1e-12);
+});
+
+test("reverse semantic zoom restores the stored overview gaze continuously", () => {
+  const atOverview = rainbowApproachPathPose(path, 0, null).forward;
+  const halfwayOut = rainbowApproachPathPose(path, 0.3, null).forward;
+  const atField = rainbowApproachPathPose(path, 0.47, null).forward;
+
+  assert.ok(atOverview.distanceTo(overviewGazeDirection) < 1e-12);
+  assert.ok(atField.distanceTo(fieldGazeDirection) < 1e-12);
+  assert.ok(Math.abs(halfwayOut.length() - 1) < 1e-12);
+  assert.ok(halfwayOut.distanceTo(overviewGazeDirection) > 0);
+  assert.ok(halfwayOut.distanceTo(fieldGazeDirection) > 0);
+
+  const reverse = [0.47, 0.4, 0.3, 0.2, 0.1, 0].map(
+    (progress) => rainbowApproachPathPose(path, progress, null).forward
+  );
+  for (let index = 1; index < reverse.length; index += 1) {
+    const previous = reverse[index - 1]!;
+    const current = reverse[index]!;
+    assert.ok(
+      current.distanceTo(overviewGazeDirection) <=
+        previous.distanceTo(overviewGazeDirection) + 1e-12
+    );
+  }
 });
 
 test("a drop selected during free exploration starts from the captured camera pose", () => {

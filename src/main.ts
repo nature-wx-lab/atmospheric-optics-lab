@@ -20,6 +20,13 @@ import {
 } from "./physics/rainbow";
 import { RainbowSelectionGesture } from "./interaction/rainbowSelectionGesture";
 import {
+  resolveRainbowZoomAction,
+  type RainbowMode,
+  zoomAmountFromButtonMultiplier,
+  zoomAmountFromPinchDistances,
+  zoomAmountFromWheelPixels
+} from "./interaction/rainbowNavigation";
+import {
   inspectionCameraPosition,
   rainbowApproachPathPose,
   slerpCameraDirection,
@@ -50,7 +57,6 @@ import { HaloOverview } from "./scenes/haloOverview";
 import { RainbowJourney, type FocusDropletSnapshot } from "./scenes/rainbowJourney";
 
 type ViewName = "overview" | "chase" | "droplet" | "halo";
-type RainbowMode = "approach" | "move" | "external";
 
 interface RainbowCameraPose {
   readonly position: THREE.Vector3;
@@ -260,6 +266,7 @@ let structureDirection = DEFAULT_STRUCTURE_DIRECTION.clone();
 let detailOrbitDirection: THREE.Vector3 | null = null;
 let eyeLookDirection = new THREE.Vector3();
 let inspectionLookDirection = new THREE.Vector3();
+let inspectionOverviewLookDirection = new THREE.Vector3();
 let inspectionPathDirection = new THREE.Vector3();
 const inspectionFreeOffset = new THREE.Vector3();
 let selectedApproachAnchorPosition: THREE.Vector3 | null = null;
@@ -289,7 +296,8 @@ function inspectionCameraPath(): InspectionCameraPath {
     origin: observerOrigin(),
     pathDirection: inspectionPathDirection,
     freeOffset: inspectionFreeOffset,
-    gazeDirection: inspectionLookDirection
+    overviewGazeDirection: inspectionOverviewLookDirection,
+    fieldGazeDirection: inspectionLookDirection
   };
 }
 
@@ -298,17 +306,20 @@ function inspectionDistanceFromObserverM(progress = state.rainbowZoom): number {
     .distanceTo(observerOrigin()) / RAIN_FIELD_METERS_TO_SCENE_UNITS;
 }
 
-function resetEyeLookDirection(): void {
+function resetEyeLookDirection(updateInspection = rainbowMode === "approach"): void {
   const direction = defaultObserverLookDirection(state.sunElevation, state.sunAzimuth);
   eyeLookDirection.set(direction.x, direction.y, direction.z).normalize();
+  if (!updateInspection) return;
   inspectionLookDirection.copy(eyeLookDirection);
   if (state.rainbowZoom <= EYE_LOOK_END && inspectionFreeOffset.lengthSq() < 1e-12) {
+    inspectionOverviewLookDirection.copy(inspectionLookDirection);
     inspectionPathDirection.copy(inspectionLookDirection);
   }
 }
 
 function resetInspectionNavigation(): void {
   inspectionFreeOffset.set(0, 0, 0);
+  inspectionLookDirection.copy(inspectionOverviewLookDirection);
   inspectionPathDirection.copy(inspectionLookDirection);
   selectedApproachAnchorPosition = null;
   selectedApproachAnchorDirection = null;
@@ -356,11 +367,16 @@ function syncRainbowDropSelectionUi(
   const armed = canArm && rainbowDropSelectionArmed;
   canvas.classList.toggle("is-drop-selection-armed", armed);
   canvas.setAttribute("aria-pressed", String(armed));
+  const canvasModeDescription = rainbowMode === "move"
+    ? "観測者移動モード。ズーム操作は観測者の物理的な前進と後退です。"
+    : rainbowMode === "external"
+      ? "外側視点モード。ドラッグで構造を回転し、選択した雨滴と表示光路へ近づけます。"
+      : "接近モード。ズームインで雨域へ進み、雨域からズームアウトすると連続虹へ戻れます。";
   canvas.setAttribute(
     "aria-label",
     armed
       ? "雨滴選択モード。画面に見える任意の雨滴を短くタップしてください。ドラッグ、ホイール、ピンチでは選択されません。"
-      : "虹とハロを観察する3Dシミュレーション。ズームだけでは雨滴を選択しません。雨滴を選ぶボタンを押した後、見える雨滴を短くタップできます。"
+      : `${canvasModeDescription} ズームだけでは雨滴を選択しません。雨滴を選ぶボタンを押した後、見える雨滴を短くタップできます。`
   );
   if (!isRainbowView(state.view)) return;
 
@@ -393,7 +409,7 @@ function syncRainbowDropSelectionUi(
       ? "選択した水滴の光路側へ拡大"
       : "特定の雨滴を選ばず雨域へ前進";
   const zoomOutLabel = canFreelyExploreRainField()
-    ? "検査カメラを視線と逆方向へ後退"
+    ? "雨滴群から連続虹へ戻る"
     : "虹の全景側へ縮小";
   for (const selector of ["#zoom-in", "#mobile-zoom-in"]) {
     requireElement<HTMLButtonElement>(selector).setAttribute("aria-label", zoomInLabel);
@@ -414,7 +430,7 @@ function setRainbowDropSelectionArmed(armed: boolean, announce = true): void {
     "#zoom-status",
     rainbowDropSelectionArmed
       ? "雨滴選択モードです。大量の雨滴が見える画面で、調べたい1滴を短くタップしてください。ドラッグやズームでは選択しません。"
-      : "雨滴選択モードを終了しました。ズームは雨滴群全体への接近だけを行います。"
+      : "雨滴選択モードを終了しました。特定の雨滴は選ばず、ズームインで雨域へ進み、ズームアウトで虹へ戻ります。"
   );
 }
 
@@ -442,6 +458,16 @@ function canFreelyExploreRainField(): boolean {
     rainbowMode === "approach" &&
     !rainbowJourney.hasExplicitSelection() &&
     state.rainbowZoom >= RAIN_FIELD_APPROACH_END - 1e-6;
+}
+
+function currentRainbowZoomAction(amount: number) {
+  return resolveRainbowZoomAction({
+    mode: rainbowMode,
+    progress: state.rainbowZoom,
+    hasExplicitSelection: rainbowJourney.hasExplicitSelection(),
+    amount,
+    rainFieldBoundary: RAIN_FIELD_APPROACH_END
+  });
 }
 
 function moveInspectionCamera(
@@ -510,19 +536,19 @@ function queuePhysicalObserverMove(distanceM: number): void {
 function setCameraDistance(multiplier: number): void {
   if (isRainbowView(state.view)) {
     selectionGesture.cancel();
-    if (rainbowMode === "move") {
-      movePhysicalObserver(multiplier < 1 ? FREE_MOVE_STEP_M : -FREE_MOVE_STEP_M);
+    const amount = zoomAmountFromButtonMultiplier(multiplier);
+    if (amount === 0) return;
+    const action = currentRainbowZoomAction(amount);
+    if (action === "physical-observer-move") {
+      movePhysicalObserver(amount > 0 ? FREE_MOVE_STEP_M : -FREE_MOVE_STEP_M);
       return;
     }
-    if (canFreelyExploreRainField()) {
-      moveInspectionCamera(
-        multiplier < 1 ? INSPECTION_FREE_MOVE_STEP_M : -INSPECTION_FREE_MOVE_STEP_M
-      );
+    if (action === "inspection-forward") {
+      moveInspectionCamera(INSPECTION_FREE_MOVE_STEP_M);
       return;
     }
     cancelRainbowAnimation();
-    const delta = multiplier < 1 ? 0.075 : -0.075;
-    applyRainbowProgress(state.rainbowZoom + delta);
+    applyRainbowProgress(state.rainbowZoom + amount);
     announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
     return;
   }
@@ -563,7 +589,7 @@ function announceRainbowProgress(frame: RainbowZoomFrame): void {
   if (!rainbowJourney.hasExplicitSelection() && frame.progress >= RAIN_FIELD_APPROACH_END - 1e-6) {
     setText(
       "#zoom-status",
-      "検査カメラは雨域へ到着しました。ここからホイール・ピンチ・WASDで自由移動、ドラッグ・矢印で視線変更、Q/Eで上下移動できます。観測点と虹の寄与計算は固定のままです。"
+      "検査カメラは雨域へ到着しました。ズームイン方向で前進し、ズームアウト方向で大量雨滴から連続虹への経路を戻れます。WASD/QEは雨域内の自由移動、ドラッグ・矢印は視線変更です。観測点と寄与計算は固定のままです。"
     );
     return;
   }
@@ -727,15 +753,12 @@ function applyRainbowCameraPose(frame: RainbowZoomFrame): void {
 }
 
 function applyRainbowProgress(progress: number): void {
-  if (progress <= 1e-6 && state.rainbowZoom > 1e-6) {
+  if (
+    rainbowMode === "approach" &&
+    progress <= 1e-6 &&
+    state.rainbowZoom > 1e-6
+  ) {
     resetInspectionNavigation();
-    if (rainbowJourney.hasExplicitSelection()) {
-      rainbowDropSelectionArmed = false;
-      detailOrbitDirection = null;
-      resetOverlapPick();
-      resetWavelengthSelectionCycle();
-      rainbowJourney.clearSelection();
-    }
   }
   const frame = rainbowZoomFrame(availableRainbowProgress(progress));
   state.rainbowZoom = frame.progress;
@@ -787,7 +810,11 @@ function animateRainbowProgress(
 }
 
 function animateInspectionReturnToOverview(onComplete: () => void): void {
-  const startLookDirection = inspectionLookDirection.clone();
+  const startLookDirection = controls.target.clone().sub(camera.position);
+  if (startLookDirection.lengthSq() < 1e-12) {
+    startLookDirection.copy(inspectionLookDirection);
+  }
+  startLookDirection.normalize();
   const defaultDirection = defaultObserverLookDirection(state.sunElevation, state.sunAzimuth);
   const endLookDirection = new THREE.Vector3(
     defaultDirection.x,
@@ -795,9 +822,13 @@ function animateInspectionReturnToOverview(onComplete: () => void): void {
     defaultDirection.z
   ).normalize();
   animateRainbowProgress(0, onComplete, (easedProgress) => {
-    inspectionLookDirection.copy(
-      slerpCameraDirection(startLookDirection, endLookDirection, easedProgress)
+    const nextDirection = slerpCameraDirection(
+      startLookDirection,
+      endLookDirection,
+      easedProgress
     );
+    inspectionOverviewLookDirection.copy(nextDirection);
+    inspectionLookDirection.copy(nextDirection);
   });
 }
 
@@ -813,9 +844,10 @@ function resetCamera(): void {
       if (rainbowMode === "approach") {
         eyeViewTracksSun = true;
         resetEyeLookDirection();
+        resetInspectionNavigation();
+      } else if (rainbowMode === "external") {
+        structureDirection.copy(DEFAULT_STRUCTURE_DIRECTION);
       }
-      resetInspectionNavigation();
-      if (rainbowMode !== "external") structureDirection.copy(DEFAULT_STRUCTURE_DIRECTION);
       detailOrbitDirection = null;
       applyRainbowProgress(0);
       updateRainbowModeUi();
@@ -826,7 +858,6 @@ function resetCamera(): void {
         animateRainbowProgress(0, finishAtOverview);
         return;
       }
-      if (rainbowJourney.hasExplicitSelection()) rainbowJourney.clearSelection();
       resetOverlapPick();
       resetWavelengthSelectionCycle();
       detailOrbitDirection = null;
@@ -1134,7 +1165,12 @@ function updateRainbowDragHint(
   if (!isRainbowView(state.view)) {
     setText("#drag-hint", "↔ ドラッグで360°回転");
   } else if (rainbowMode === "external") {
-    setText("#drag-hint", "↔ 外側カメラを回転 / ズームで選択光路へ");
+    setText(
+      "#drag-hint",
+      rainbowJourney.hasExplicitSelection()
+        ? "↔ 外側カメラを回転 / ズームで選択滴と表示光路へ"
+        : "↔ 外側カメラを回転 / 雨滴を選ぶと表示光路へ接近"
+    );
   } else if (rainbowMode === "move") {
     setText("#drag-hint", "↔ 水平方位を変更 / ホイール・ピンチで前後移動");
   } else if (!rainbowJourney.hasExplicitSelection()) {
@@ -1143,7 +1179,7 @@ function updateRainbowDragHint(
       rainbowDropSelectionArmed
         ? "◎ 選択中：見える雨滴を短くタップ / ドラッグでは選択しません"
         : canFreelyExploreRainField()
-          ? "自由探索：ホイール・ピンチ/WASDで移動、ドラッグ・矢印で視線、Q/Eで上下"
+          ? "自由探索：ズームインで前進／ズームアウトで虹へ戻る、WASD/QEで移動"
           : "↔ 視線を変更 / ズームで雨滴群へ（特定の滴は選びません）"
     );
   } else if (frame.progress <= EYE_LOOK_END) {
@@ -1298,13 +1334,13 @@ function updateRainbowExplanation(
             `${formatCount(focus.visibleDroplets)}滴`,
             `${formatCount(focus.contributingDroplets)}滴`,
             "未選択",
-            "色・点・固定ID"
+            "色・選択モードの点・固定ID"
           ]
         );
         setText("#explanation-title", "既定IDへは移動しません");
         setText(
           "#explanation-body",
-          "色付きの点は現在の観測点へ虹光を送る代表滴、灰色点は現在の虹角外です。画面上の任意の点をクリック／短くタップすると、その固定IDへ以後のズームを接続します。"
+          "色付きの点は現在の観測点へ虹光を送る代表滴、灰色点は現在の虹角外です。「画面の雨滴を選ぶ」を押した後、任意の点をクリック／短くタップすると、その固定IDへ以後のズームを接続します。"
         );
         break;
       }
@@ -1567,13 +1603,17 @@ function updateCurrentConditions(): void {
   const previousFocus = isRainbowView(state.view)
     ? rainbowJourney.getFocusSnapshot()
     : null;
-  if (
-    isRainbowView(state.view) &&
-    rainbowMode === "approach" &&
-    eyeViewTracksSun &&
-    state.rainbowZoom <= EYE_LOOK_END
-  ) {
-    resetEyeLookDirection();
+  if (isRainbowView(state.view) && rainbowMode === "approach" && eyeViewTracksSun) {
+    const direction = defaultObserverLookDirection(state.sunElevation, state.sunAzimuth);
+    eyeLookDirection.set(direction.x, direction.y, direction.z).normalize();
+    inspectionOverviewLookDirection.copy(eyeLookDirection);
+    if (
+      state.rainbowZoom <= EYE_LOOK_END &&
+      inspectionFreeOffset.lengthSq() < 1e-12
+    ) {
+      inspectionLookDirection.copy(eyeLookDirection);
+      inspectionPathDirection.copy(eyeLookDirection);
+    }
   }
   if (isRainbowView(state.view)) detailOrbitDirection = null;
   syncCurrentScene();
@@ -1675,6 +1715,7 @@ function rotateCamera(deltaAzimuth: number, deltaPolar: number): void {
       state.rainbowZoom <= EYE_LOOK_END &&
       inspectionFreeOffset.lengthSq() < 1e-12
     ) {
+      inspectionOverviewLookDirection.copy(inspectionLookDirection);
       inspectionPathDirection.copy(inspectionLookDirection);
     }
     eyeViewTracksSun = false;
@@ -2060,6 +2101,7 @@ controls.addEventListener("change", () => {
           state.rainbowZoom <= EYE_LOOK_END &&
           inspectionFreeOffset.lengthSq() < 1e-12
         ) {
+          inspectionOverviewLookDirection.copy(inspectionLookDirection);
           inspectionPathDirection.copy(inspectionLookDirection);
         }
         eyeViewTracksSun = false;
@@ -2105,28 +2147,27 @@ canvas.addEventListener(
         : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
           ? event.deltaY * Math.max(1, stage.clientHeight)
           : event.deltaY;
-    if (rainbowMode === "move") {
+    const amount = zoomAmountFromWheelPixels(pixelDelta);
+    const action = currentRainbowZoomAction(amount);
+    if (action === "physical-observer-move") {
       queuePhysicalObserverMove(
         THREE.MathUtils.clamp(-pixelDelta * 0.025, -FREE_MOVE_STEP_M, FREE_MOVE_STEP_M)
       );
       return;
     }
-    if (canFreelyExploreRainField()) {
+    if (action === "inspection-forward") {
       moveInspectionCamera(
-        THREE.MathUtils.clamp(-pixelDelta * 0.04, -12, 12)
+        THREE.MathUtils.clamp(-pixelDelta * 0.04, 0, INSPECTION_FREE_MOVE_STEP_M)
       );
       return;
     }
-    const delta = THREE.MathUtils.clamp(pixelDelta * 0.00065, -0.12, 0.12);
-    applyRainbowProgress(state.rainbowZoom - delta);
+    applyRainbowProgress(state.rainbowZoom + amount);
   },
   { capture: true, passive: false }
 );
 
 const rainbowTouchPointers = new Map<number, { x: number; y: number }>();
-let rainbowPinchStartDistance = 0;
-let rainbowPinchStartProgress = 0;
-let rainbowPinchAppliedMoveM = 0;
+let rainbowPinchPreviousDistance = 0;
 let pinchingRainbow = false;
 
 function currentRainbowPinchDistance(): number {
@@ -2141,8 +2182,7 @@ function endRainbowPinch(pointerId: number): void {
   rainbowTouchPointers.delete(pointerId);
   if (pinchingRainbow && rainbowTouchPointers.size < 2) {
     pinchingRainbow = false;
-    rainbowPinchStartDistance = 0;
-    rainbowPinchAppliedMoveM = 0;
+    rainbowPinchPreviousDistance = 0;
   }
   if (rainbowTouchPointers.size === 0) {
     controls.enabled = true;
@@ -2158,10 +2198,8 @@ canvas.addEventListener(
     if (event.pointerType !== "touch" || !isRainbowView(state.view)) return;
     rainbowTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (rainbowTouchPointers.size !== 2) return;
-    rainbowPinchStartDistance = currentRainbowPinchDistance();
-    rainbowPinchStartProgress = state.rainbowZoom;
-    rainbowPinchAppliedMoveM = 0;
-    pinchingRainbow = rainbowPinchStartDistance > 0;
+    rainbowPinchPreviousDistance = currentRainbowPinchDistance();
+    pinchingRainbow = rainbowPinchPreviousDistance > 0;
     if (pinchingRainbow) {
       controls.enabled = false;
       selectionGesture.cancel();
@@ -2175,36 +2213,38 @@ canvas.addEventListener(
   (event) => {
     if (event.pointerType !== "touch" || !rainbowTouchPointers.has(event.pointerId)) return;
     rainbowTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (!pinchingRainbow || rainbowPinchStartDistance <= 0) return;
+    if (!pinchingRainbow || rainbowPinchPreviousDistance <= 0) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     const currentDistance = currentRainbowPinchDistance();
     if (currentDistance <= 0) return;
     cancelRainbowAnimation();
-    if (rainbowMode === "move") {
-      const desiredMoveM = THREE.MathUtils.clamp(
-        Math.log(currentDistance / rainbowPinchStartDistance) * 20,
-        -FREE_MOVE_STEP_M * 2,
-        FREE_MOVE_STEP_M * 2
+    const previousDistance = rainbowPinchPreviousDistance;
+    rainbowPinchPreviousDistance = currentDistance;
+    const distanceRatioLog = Math.log(currentDistance / previousDistance);
+    const amount = zoomAmountFromPinchDistances(currentDistance, previousDistance);
+    const action = currentRainbowZoomAction(amount);
+    if (action === "physical-observer-move") {
+      queuePhysicalObserverMove(
+        THREE.MathUtils.clamp(
+          distanceRatioLog * 20,
+          -FREE_MOVE_STEP_M * 2,
+          FREE_MOVE_STEP_M * 2
+        )
       );
-      queuePhysicalObserverMove(desiredMoveM - rainbowPinchAppliedMoveM);
-      rainbowPinchAppliedMoveM = desiredMoveM;
       return;
     }
-    if (canFreelyExploreRainField()) {
-      const desiredMoveM = THREE.MathUtils.clamp(
-        Math.log(currentDistance / rainbowPinchStartDistance) * 38,
-        -16,
-        16
+    if (action === "inspection-forward") {
+      moveInspectionCamera(
+        THREE.MathUtils.clamp(
+          distanceRatioLog * 38,
+          0,
+          INSPECTION_FREE_MOVE_STEP_M
+        )
       );
-      moveInspectionCamera(desiredMoveM - rainbowPinchAppliedMoveM);
-      rainbowPinchAppliedMoveM = desiredMoveM;
       return;
     }
-    applyRainbowProgress(
-      rainbowPinchStartProgress +
-        Math.log(currentDistance / rainbowPinchStartDistance) * 0.48
-    );
+    applyRainbowProgress(state.rainbowZoom + amount);
   },
   { capture: true, passive: false }
 );
@@ -2377,23 +2417,9 @@ canvas.addEventListener("keydown", (event) => {
   else if (event.key === "+" || event.key === "=") setCameraDistance(0.9);
   else if (event.key === "-" || event.key === "_") setCameraDistance(1.1);
   else if (event.key === "PageUp" && isRainbowView(state.view)) {
-    if (rainbowMode === "move") {
-      movePhysicalObserver(FREE_MOVE_STEP_M);
-      event.preventDefault();
-      return;
-    }
-    cancelRainbowAnimation();
-    applyRainbowProgress(state.rainbowZoom + 0.12);
-    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
+    setCameraDistance(0.9);
   } else if (event.key === "PageDown" && isRainbowView(state.view)) {
-    if (rainbowMode === "move") {
-      movePhysicalObserver(-FREE_MOVE_STEP_M);
-      event.preventDefault();
-      return;
-    }
-    cancelRainbowAnimation();
-    applyRainbowProgress(state.rainbowZoom - 0.12);
-    announceRainbowProgress(rainbowZoomFrame(state.rainbowZoom));
+    setCameraDistance(1.1);
   } else if (event.key === "Home" && isRainbowView(state.view)) {
     if (rainbowMode === "move") resetPhysicalObserver();
     else resetCamera();

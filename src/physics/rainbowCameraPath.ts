@@ -12,7 +12,8 @@ export interface InspectionCameraPath {
   readonly origin: THREE.Vector3;
   readonly pathDirection: THREE.Vector3;
   readonly freeOffset: THREE.Vector3;
-  readonly gazeDirection: THREE.Vector3;
+  readonly overviewGazeDirection: THREE.Vector3;
+  readonly fieldGazeDirection: THREE.Vector3;
 }
 
 export interface SelectedDropCameraTarget {
@@ -62,7 +63,7 @@ export function inspectionCameraPosition(
   return path.origin
     .clone()
     .addScaledVector(
-      normalized(path.pathDirection, path.gazeDirection),
+      normalized(path.pathDirection, path.overviewGazeDirection),
       fieldInspectionTravelM(progress) * RAIN_FIELD_METERS_TO_SCENE_UNITS
     )
     .addScaledVector(path.freeOffset, fieldApproachBlend(progress));
@@ -78,7 +79,13 @@ export function rainbowApproachPathPose(
   selected: SelectedDropCameraTarget | null
 ): RainbowApproachPathPose {
   const value = THREE.MathUtils.clamp(progress, 0, 1);
-  const gaze = normalized(path.gazeDirection, path.pathDirection);
+  const overviewGaze = normalized(path.overviewGazeDirection, path.pathDirection);
+  const fieldGaze = normalized(path.fieldGazeDirection, overviewGaze);
+  const gaze = slerpCameraDirection(
+    overviewGaze,
+    fieldGaze,
+    fieldApproachBlend(value)
+  );
   const fieldPosition = inspectionCameraPosition(path, value);
   if (!selected || value <= RAIN_FIELD_APPROACH_END) {
     return {
