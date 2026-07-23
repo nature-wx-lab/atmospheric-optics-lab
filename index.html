@@ -2,364 +2,49 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; media-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'"
-    />
-    <meta name="referrer" content="no-referrer" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex,nofollow,noarchive" />
-    <meta name="theme-color" content="#071014" />
-    <meta
-      name="description"
-      content="虹やハロがなぜその角度に見えるのかを、観察者・太陽・水滴・氷晶の3D関係から確かめるNature Wx Labの開発中ツールです。"
-    />
-    <link rel="canonical" href="https://nature-wx-lab.github.io/atmospheric-optics-lab/" />
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <title>大気光学3Dラボ β | Nature Wx Lab</title>
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="referrer" content="no-referrer" />
+    <title>大気光学3Dラボ | 開発停止</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+        color: #18323b;
+        background: #edf6f7;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      main {
+        width: min(680px, 100%);
+        padding: clamp(28px, 6vw, 56px);
+        border: 1px solid #bed5d9;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 16px 48px rgb(28 77 87 / 10%);
+      }
+
+      p { line-height: 1.8; }
+      .label { color: #287783; font-weight: 700; letter-spacing: .08em; }
+      h1 { margin: .35em 0 .8em; font-size: clamp(1.8rem, 6vw, 3rem); line-height: 1.25; }
+      a { color: #176776; }
+    </style>
   </head>
   <body>
-    <noscript>
-      <p class="noscript">この3Dツールの実行にはJavaScriptが必要です。</p>
-    </noscript>
-    <div id="app" class="app-shell">
-      <header class="topbar">
-        <div class="brand-block">
-          <p class="eyebrow">NATURE WX LAB / ATMOSPHERIC OPTICS</p>
-          <div class="title-line">
-            <h1>大気光学3Dラボ</h1>
-            <span class="status-chip">開発中 β</span>
-          </div>
-          <p class="lede">太陽・観測者・多数の雨滴・光路を、一つの3D空間で確かめる。</p>
-        </div>
-        <div class="top-actions" aria-label="表示操作">
-          <button id="reset-view" class="button button-quiet" type="button">虹が見える視点</button>
-          <a class="button button-quiet" href="https://naturewxlab.com/" rel="home">公式HP</a>
-        </div>
-      </header>
-
-      <nav class="mode-tabs" aria-label="観察モード">
-        <button class="mode-tab is-active" type="button" data-view="overview" aria-pressed="true">
-          <span>01</span> 虹の3D構造
-        </button>
-        <button class="mode-tab" type="button" data-view="chase" aria-pressed="false">
-          <span>02</span> 観測者を動かす
-        </button>
-        <button
-          class="mode-tab"
-          type="button"
-          data-view="droplet"
-          aria-pressed="false"
-          aria-label="虹の連続ズームを水滴と光路まで進める"
-        >
-          <span>03</span> 1滴の内部へ
-        </button>
-        <button class="mode-tab" type="button" data-view="halo" aria-pressed="false">
-          <span>04</span> 氷晶とハロ
-        </button>
-      </nav>
-
-      <main class="workspace">
-        <aside class="control-panel" aria-labelledby="control-title">
-          <div class="panel-heading">
-            <p class="panel-kicker">CONDITIONS</p>
-            <h2 id="control-title">光と観察条件</h2>
-          </div>
-
-          <fieldset id="order-controls" class="control-group">
-            <legend>虹の光路</legend>
-            <div class="segment" role="group" aria-label="虹の次数">
-              <button class="segment-button is-active" type="button" data-order="1" aria-pressed="true">一次虹</button>
-              <button class="segment-button" type="button" data-order="2" aria-pressed="false">二次虹</button>
-            </div>
-            <p id="reflection-note" class="control-note">主虹と副虹は同じ空間に表示し、ここで詳しく見る次数を選びます。</p>
-          </fieldset>
-
-          <label id="elevation-control" class="slider-control" for="sun-elevation">
-            <span class="slider-label"><span>太陽高度</span><output id="sun-elevation-value">12°</output></span>
-            <input id="sun-elevation" type="range" min="0" max="80" step="1" value="12" aria-valuetext="12度" />
-          </label>
-
-          <label id="azimuth-control" class="slider-control" for="sun-azimuth">
-            <span class="slider-label"><span>太陽の方位</span><output id="sun-azimuth-value">225°</output></span>
-            <input id="sun-azimuth" type="range" min="0" max="359" step="1" value="225" aria-valuetext="225度" />
-          </label>
-
-          <label id="density-control" class="slider-control" for="particle-density">
-            <span class="slider-label"><span>雨滴の見える密度</span><output id="particle-density-value">70%</output></span>
-            <input id="particle-density" type="range" min="15" max="100" step="5" value="70" aria-valuetext="70パーセント" />
-            <span class="control-note">描画密度だけを変え、角度の計算値は変えません。</span>
-          </label>
-
-          <section id="chase-controls" class="view-controls" aria-labelledby="chase-control-title" hidden>
-            <h3 id="chase-control-title">虹を追う数値実験</h3>
-            <p class="control-note chase-fixed-note">太陽は高度12°・方位225°に固定し、観察者だけを動かします。</p>
-            <label class="slider-control" for="observer-distance">
-              <span class="slider-label">
-                <span>観察者の移動</span><output id="observer-distance-value">0 m</output>
-              </span>
-              <input id="observer-distance" type="range" min="0" max="500" step="10" value="0" aria-valuetext="0メートル" />
-              <span class="control-note">同じ雨域モデル内を反太陽方向へ移動します。</span>
-            </label>
-          </section>
-
-          <section id="halo-controls" class="view-controls" aria-labelledby="halo-control-title" hidden>
-            <h3 id="halo-control-title">ハロの種類</h3>
-            <label class="select-control" for="halo-type">
-              <span>表示する現象</span>
-              <select id="halo-type">
-                <option value="halo-22">22°ハロ</option>
-                <option value="halo-46">46°ハロ</option>
-                <option value="sundog">幻日</option>
-                <option value="circumzenithal-arc">環天頂アーク</option>
-                <option value="upper-tangent-arc">上部タンジェントアーク</option>
-                <option value="circumhorizontal-arc">環水平アーク</option>
-              </select>
-            </label>
-            <p id="halo-model-note" class="control-note">ランダムな向きの六角柱氷晶がつくる円形のハロ。</p>
-          </section>
-
-          <div class="operation-card">
-            <div id="rainbow-selection-controls" class="rainbow-selection-controls">
-              <strong>詳しく見る雨滴を選ぶ</strong>
-              <p>外側3Dでは赤と青紫を目へ返す別々の雨滴を最初から示します。さらに任意の雨滴を選ぶと、その同じIDへ近づき、表面から内部光路まで連続して確認できます。</p>
-              <div id="wavelength-selection-actions" class="wavelength-selection-actions" aria-label="この観測点へ届く虹光の代表波長から雨滴を選択">
-                <span>この目へ届く虹光から</span>
-                <div>
-                  <button type="button" data-select-wavelength="656.3"><i aria-hidden="true"></i>赤側 656 nm</button>
-                  <button type="button" data-select-wavelength="530"><i aria-hidden="true"></i>緑 530 nm</button>
-                  <button type="button" data-select-wavelength="404.7"><i aria-hidden="true"></i>青紫側 405 nm</button>
-                </div>
-                <small>色名は水滴の色ではなく、この観測点へ届く虹光の代表波長です。同じ色を再度押すと別IDを選びます。</small>
-              </div>
-              <div id="drop-selection-actions" class="drop-selection-actions" aria-label="虹に寄与する水滴を順に選択">
-                <button id="previous-contributor" type="button">← 前の寄与滴</button>
-                <button id="next-contributor" type="button">次の寄与滴 →</button>
-                <button id="clear-drop-selection" type="button">雨域へ戻って選び直す</button>
-              </div>
-              <div id="drop-id-actions" class="drop-id-actions" aria-label="雨滴IDを直接選択">
-                <label for="drop-id-input">全60,000滴からID指定</label>
-                <div>
-                  <input
-                    id="drop-id-input"
-                    type="text"
-                    inputmode="numeric"
-                    autocomplete="off"
-                    spellcheck="false"
-                    maxlength="11"
-                    placeholder="例 33494"
-                    aria-describedby="drop-id-help"
-                  />
-                  <button id="select-drop-id" type="button">選択</button>
-                </div>
-                <span id="drop-id-help">0〜59999、または drop-000000 形式。描画密度の外にある滴も同じ固定雨域から呼び出せます。</span>
-                <button id="next-overlap-candidate" type="button" disabled>同じ場所の次の候補</button>
-              </div>
-              <p id="selected-drop-readout" class="selected-drop-readout">選択中の雨滴を読み込み中</p>
-            </div>
-            <label id="semantic-zoom-control" class="slider-control semantic-zoom-control" for="semantic-zoom">
-              <span class="slider-label">
-                <span id="semantic-zoom-label">虹→雨滴群→選択滴→光路</span><output id="semantic-zoom-value">虹の全景 0%</output>
-              </span>
-              <input
-                id="semantic-zoom"
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                value="0"
-                aria-valuetext="虹の全景、意味ズーム0パーセント"
-              />
-              <span class="zoom-landmarks" aria-hidden="true"><span>雨域</span><span>水滴</span><span>光路</span></span>
-            </label>
-            <p id="free-move-note" class="free-move-note" hidden>−で後退、＋で視線の水平方位へ5 m前進。ホイール／ピンチでも前後移動します。</p>
-            <div class="zoom-actions" aria-label="ズーム操作">
-              <button id="zoom-out" type="button" aria-label="虹の全景側へ縮小">−</button>
-              <button id="focus-particle" type="button">この水滴へ</button>
-              <button id="zoom-in" type="button" aria-label="水滴の光路側へ拡大">＋</button>
-            </div>
-            <p id="zoom-status" class="sr-only" aria-live="polite" aria-atomic="true">虹の全景です。</p>
-          </div>
-        </aside>
-
-        <section class="scene-panel" aria-labelledby="scene-title">
-          <div class="scene-heading">
-            <div>
-              <p id="scene-kicker" class="panel-kicker">RAIN FIELD → RAINBOW</p>
-              <h2 id="scene-title">太陽・観測者・多数の雨滴を同じ空間で見る</h2>
-            </div>
-            <div class="scale-readout">
-              <span>表示スケール</span>
-              <strong id="scale-readout">意味スケール指標 約300 m相当 / 選択滴径 0.45–1.00 mm</strong>
-            </div>
-          </div>
-          <div class="mobile-zoom-dock" aria-label="連続ズーム操作">
-            <button id="mobile-zoom-out" type="button" aria-label="虹の全景側へ縮小">−</button>
-            <label id="mobile-semantic-zoom-control" for="mobile-semantic-zoom">
-              <span><span id="mobile-semantic-zoom-label">虹→雨滴群→選択滴→光路</span> <output id="mobile-semantic-zoom-value">0%</output></span>
-              <input
-                id="mobile-semantic-zoom"
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                value="0"
-                aria-valuetext="虹の全景、意味ズーム0パーセント"
-              />
-            </label>
-            <span id="mobile-free-move-note" class="mobile-free-move-note" hidden>前後 5 m</span>
-            <button id="mobile-zoom-in" type="button" aria-label="水滴の光路側へ拡大">＋</button>
-          </div>
-          <div id="mobile-wavelength-dock" class="mobile-wavelength-dock" aria-label="虹光の色から雨滴を選択">
-            <button type="button" data-select-wavelength="656.3">赤側 656</button>
-            <button type="button" data-select-wavelength="530">緑 530</button>
-            <button type="button" data-select-wavelength="404.7">青紫 405</button>
-          </div>
-          <div id="mobile-drop-dock" class="mobile-drop-dock" aria-label="虹に寄与する水滴を選択">
-            <button id="mobile-previous-contributor" type="button" aria-label="前の寄与滴を選択">← 前</button>
-            <button id="mobile-clear-drop-selection" type="button"><span id="mobile-selected-drop">雨滴を選択</span></button>
-            <button id="mobile-next-contributor" type="button" aria-label="次の寄与滴を選択">次 →</button>
-          </div>
-          <div id="mobile-drop-id-dock" class="mobile-drop-id-dock" aria-label="全雨滴からIDを指定">
-            <input
-              id="mobile-drop-id-input"
-              type="text"
-              inputmode="numeric"
-              autocomplete="off"
-              spellcheck="false"
-              maxlength="11"
-              placeholder="雨滴ID 0〜59999"
-              aria-label="モバイル雨滴ID"
-            />
-            <button id="mobile-select-drop-id" type="button">このIDへ</button>
-          </div>
-          <div id="scene-stage" class="scene-stage">
-            <canvas
-              id="optics-canvas"
-              tabindex="0"
-              aria-label="虹とハロを観察する3Dシミュレーション。観測者の目では、虹の調べたい色にカーソルを置いてホイールすると、その視線を通って同じ色を返す実在雨滴へ連続接近します。虹帯外では寄与滴を選びません。雨域到着後は検査カメラで自由探索でき、ズームアウトすると連続虹へ戻れます。"
-              aria-describedby="semantic-note"
-            ></canvas>
-            <div
-              id="rainbow-perspective-switch"
-              class="perspective-switch"
-              role="group"
-              aria-label="虹の観察モード"
-            >
-              <button
-                type="button"
-                data-rainbow-mode="external"
-                aria-pressed="false"
-              >
-                3D空間を外から
-              </button>
-              <button
-                class="is-active"
-                type="button"
-                data-rainbow-mode="approach"
-                aria-pressed="true"
-              >
-                観測者の目
-              </button>
-              <button
-                type="button"
-                data-rainbow-mode="move"
-                aria-pressed="false"
-              >
-                観測者を移動
-              </button>
-            </div>
-            <div class="canvas-overlay canvas-overlay-top">
-              <span id="view-state">観測者の目から見える虹</span>
-              <span id="fps-state">WebGL 2</span>
-            </div>
-            <div id="world-legend" class="world-legend" aria-label="3D光路の凡例" hidden>
-              <span><i class="legend-ray-white" aria-hidden="true"></i>水面までは白い太陽光</span>
-              <span><i class="legend-ray-red" aria-hidden="true"></i>赤を返す雨滴</span>
-              <span><i class="legend-ray-violet" aria-hidden="true"></i>青紫を返す別の雨滴</span>
-              <span><i class="legend-primary" aria-hidden="true"></i>主虹：内部反射1回</span>
-              <span><i class="legend-secondary" aria-hidden="true"></i>副虹：内部反射2回</span>
-              <span><i class="legend-dark-band" aria-hidden="true"></i>主虹と副虹の間の暗帯</span>
-            </div>
-            <div class="canvas-overlay canvas-overlay-bottom">
-              <span id="drag-hint" class="drag-hint">↔ ドラッグで視線を360°</span>
-              <span id="camera-readout">目の位置 / 視線を読み込み中</span>
-            </div>
-            <div id="webgl-fallback" class="fallback" hidden>
-              <h3>3D表示を開始できませんでした</h3>
-              <p>下の数値は引き続き確認できます。WebGL 2対応ブラウザで再度お試しください。</p>
-            </div>
-          </div>
-          <p id="semantic-note" class="semantic-note">
-            主虹・副虹、アレキサンダーの暗帯、白い入射光、赤と青紫を別々の雨滴から観測者へ返す光路を同じ座標系で計算しています。外側3Dを回り込み、観測者の目へ切り替え、任意の雨滴へ近づけます。60,000滴は実際の降水量ではなく、角度条件を調べる固定代表標本です。
-          </p>
-        </section>
-
-        <aside class="data-panel" aria-labelledby="data-title">
-          <div class="panel-heading">
-            <p class="panel-kicker">LIVE GEOMETRY</p>
-            <h2 id="data-title">なぜ、そこに見える？</h2>
-          </div>
-
-          <section class="primary-readout" aria-live="polite">
-            <span id="angle-label">一次虹の角半径</span>
-            <strong id="angle-value">40.5°–42.4°</strong>
-            <p id="angle-context">反太陽点を中心に、赤が外側・紫が内側。</p>
-          </section>
-
-          <dl class="fact-grid">
-            <div><dt id="fact-1-label">中心</dt><dd id="center-value">観察者の反太陽点</dd></div>
-            <div><dt id="fact-2-label">内部反射</dt><dd id="reflection-value">1回</dd></div>
-            <div><dt id="fact-3-label">赤 656.3 nm</dt><dd id="red-angle-value">42.4°</dd></div>
-            <div><dt id="fact-4-label">紫 404.7 nm</dt><dd id="violet-angle-value">40.7°</dd></div>
-          </dl>
-
-          <section class="explanation-card">
-            <h3 id="explanation-title">虹は空に貼り付いた物体ではない</h3>
-            <p id="explanation-body">
-              観察者から見て反太陽方向へ特定の角度で光を返す水滴だけが、虹の一部として見えます。観察者が動けば、条件を満たす水滴も入れ替わります。
-            </p>
-          </section>
-
-          <section id="chase-data" class="experiment-data" aria-labelledby="chase-data-title" hidden>
-            <h3 id="chase-data-title">移動前後の計算データ</h3>
-            <dl>
-              <div><dt>観察者</dt><dd id="chase-position-value">0 m</dd></div>
-              <div><dt>虹の角半径</dt><dd id="chase-angle-value">42.1°</dd></div>
-              <div><dt>寄与する水滴</dt><dd id="chase-droplet-value">—</dd></div>
-              <div><dt>開始時と共通</dt><dd id="chase-overlap-value">—</dd></div>
-            </dl>
-            <p id="chase-distance-note">角度だけから虹までの距離は決まりません。</p>
-          </section>
-
-          <details class="model-details">
-            <summary>計算モデルと限界</summary>
-            <ul id="model-list">
-              <li id="model-1">遠景は380–780 nmを積分した連続相対放射輝度、接近後は固定60,000滴の代表標本です。</li>
-              <li id="model-2">球形水滴・幾何光学。IAPWS水とCiddor乾燥空気の相対屈折率を使用します。</li>
-              <li id="model-3">太陽円盤と雨滴径広がりは等価幅で平滑化し、完全なAiry／Lorenz–Mie計算ではありません。</li>
-              <li id="model-4">代表雨滴数・描画密度・配置距離は、実際の降水量や虹までの固有距離を表しません。</li>
-            </ul>
-          </details>
-        </aside>
-      </main>
-
-      <footer class="footer-bar">
-        <p>
-          出典・基礎：<a href="https://glossary.ametsoc.org/wiki/rainbow/" rel="noreferrer">AMS Glossary: rainbow</a> ／
-          <a href="https://doi.org/10.1175/BAMS-D-20-0101.1" rel="noreferrer">Businger: observer-centred rainbow cone</a> ／
-          <a href="https://doi.org/10.1145/2077341.2077344" rel="noreferrer">Sadeghi et al.: physically based rainbows</a> ／
-          <a href="https://doi.org/10.1364/AO.30.003415" rel="noreferrer">Lynch &amp; Schwartz: Rainbows and fogbows</a> ／
-          <a href="https://doi.org/10.1364/AO.37.001506" rel="noreferrer">Lee: Mie, Airy, and the natural rainbow</a> ／
-          <a href="https://iapws.org/documents/release/Rindex.download" rel="noreferrer">IAPWS R9-97 水の屈折率</a> ／
-          <a href="https://doi.org/10.1364/AO.35.001566" rel="noreferrer">Ciddor: 空気の屈折率</a> ／
-          <a href="https://jcgt.org/published/0002/02/01/" rel="noreferrer">Wyman et al.: CIE XYZ analytic fits</a> ／
-          <a href="https://www.sciencedirect.com/science/article/abs/pii/S037015730100076X" rel="noreferrer">Adam: The mathematical physics of rainbows and glories</a> ／
-          <a href="https://cloudatlas.wmo.int/en/halo-phenomena.html" rel="noreferrer">WMO Cloud Atlas: halo</a>
-        </p>
-        <p>教育用β。安全・防災上の判断には使用せず、太陽を直接見ないでください。</p>
-      </footer>
-    </div>
-    <script type="module" src="/src/main.ts"></script>
+    <main>
+      <p class="label">NATURE WX LAB</p>
+      <h1>大気光学3Dラボは開発を停止しました</h1>
+      <p>求めていた3D教材として十分な品質に達していないため、2026年7月23日をもって開発を停止し、シミュレーターの公開を終了しました。</p>
+      <p><a href="https://naturewxlab.com/" rel="noreferrer">Nature Wx Lab 公式サイトへ戻る</a></p>
+    </main>
   </body>
 </html>

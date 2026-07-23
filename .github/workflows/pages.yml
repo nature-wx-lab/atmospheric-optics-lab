@@ -1,4 +1,4 @@
-name: Verify and deploy Pages
+name: Verify and deploy stopped Pages site
 
 on:
   push:
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
@@ -30,39 +30,28 @@ jobs:
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "24"
-
-      - name: Set up pnpm
-        run: corepack enable
-
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
-      - name: Install exact dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify source, physics, and production build
+      - name: Verify privacy and build the minimal stop page
         env:
           PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
         run: |
           python scripts/privacy_gate.py
-          pnpm test
-          pnpm build
-          node scripts/verify-build.mjs
-          python scripts/build_deployment_manifest.py --root dist --source-commit "${{ steps.source.outputs.sha }}"
-          node scripts/verify-build.mjs dist
-          python scripts/privacy_gate.py --root dist --skip-history
+          mkdir _site
+          cp index.html _site/index.html
+          cp public/robots.txt _site/robots.txt
+          python scripts/build_deployment_manifest.py --root _site --source-commit "${{ steps.source.outputs.sha }}"
+          test "$(find _site -type f | wc -l | tr -d ' ')" = "3"
+          python scripts/privacy_gate.py --root _site --skip-history
           git diff --check
 
       - name: Upload exact verified Pages artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
-          path: dist
+          path: _site
           retention-days: 1
 
   deploy:
